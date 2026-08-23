@@ -1,19 +1,13 @@
 "use strict";
 
-const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const XLSX = require("../vendor/xlsx.full.min.js");
-const core = require("../core.js");
+const { ingestQuantStudioFixture, portableFixturePath } = require("./support/quantstudio-fixture.js");
 
-const templatePath = process.env.CNV_TEMPLATE_XLS || "/Users/annayzhu/Library/CloudStorage/OneDrive-Personal/Anna_work/D_Tasks/D20260706-GSTM1_CNV/20260713/2026-07-13_000445.xls";
+test("the 32-well QuantStudio fixture is parsed and guarded correctly", () => {
+  const { fixturePath, parsed, analysis } = ingestQuantStudioFixture();
 
-test("the supplied 32-well QuantStudio template is parsed and guarded correctly", { skip: !fs.existsSync(templatePath) }, () => {
-  const workbook = XLSX.read(fs.readFileSync(templatePath), { type: "buffer", raw: true });
-  const aoa = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: null, blankrows: true });
-  const parsed = core.parseAoA(aoa);
-  const analysis = core.analyze(parsed.records, parsed.metadata, {});
-
+  assert.equal(fixturePath, process.env.CNV_TEMPLATE_XLS || portableFixturePath);
   assert.equal(parsed.headerRow, 47);
   assert.equal(parsed.records.length, 80);
   assert.equal(analysis.wellsUsed, 32);
@@ -32,11 +26,8 @@ test("the supplied 32-well QuantStudio template is parsed and guarded correctly"
   assert.equal(gstm1.results.find((x) => x.sampleName === "Sample 8").classification, "INVALID");
 });
 
-test("merged-panel GSTT1 calculation reproduces the instrument RQ check value", { skip: !fs.existsSync(templatePath) }, () => {
-  const workbook = XLSX.read(fs.readFileSync(templatePath), { type: "buffer", raw: true });
-  const aoa = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: null, blankrows: true });
-  const parsed = core.parseAoA(aoa);
-  const analysis = core.analyze(parsed.records, parsed.metadata, {
+test("merged-panel GSTT1 calculation reproduces the instrument RQ check value", () => {
+  const { analysis } = ingestQuantStudioFixture({
     splitPanels: false,
     calibrations: { GSTT1: { mode: "sample", sampleName: "Sample 1", copyNumber: 2, independentlyConfirmed: true } }
   });
@@ -50,11 +41,8 @@ test("merged-panel GSTT1 calculation reproduces the instrument RQ check value", 
   assert.ok(Math.abs(sample7.calculatedCopyNumber - 1.196514010429382) < 1e-6);
 });
 
-test("the supplied template can manually designate a genuinely confirmed NTC sample without rewriting source names", { skip: !fs.existsSync(templatePath) }, () => {
-  const workbook = XLSX.read(fs.readFileSync(templatePath), { type: "buffer", raw: true });
-  const aoa = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: null, blankrows: true });
-  const parsed = core.parseAoA(aoa);
-  const analysis = core.analyze(parsed.records, parsed.metadata, {
+test("the QuantStudio fixture can designate a confirmed NTC sample without rewriting source names", () => {
+  const { analysis } = ingestQuantStudioFixture({
     ntcAssignment: {
       mode: "manual_sample",
       sampleNames: ["Sample 8"],

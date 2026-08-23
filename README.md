@@ -70,13 +70,38 @@ XLSX 只生成一个文件，共 11 张工作表；首页用于直接登记 Samp
 
 运行时无需安装 Python、R 或服务器。工程内置 SheetJS Community Edition 0.20.3，用于浏览器中读写 XLS/XLSX/CSV/TXT。
 
-单元和模板集成测试：
+根目录提供标准 Node 测试入口；无需安装第三方测试框架：
 
 ```bash
-node --test tests/*.test.js
+npm test
 ```
 
-测试覆盖：ΔΔCt 主公式、0-copy 校准品拦截、内参失败不误判、duplex/triplex 分层、自动/人工 NTC、未确认 NTC 拦截、NTC 扩增、校准冲突、一体化工作簿字段顺序与原始 Ct 完整性、样本数不足时不伪造 Confidence/|Z|、QuantStudio 重名 Cq Conf 列解析、384 孔边界，以及用户提供的真实 `.xls` 回放。
+也可以按职责单独运行：
+
+```bash
+npm run test:core
+npm run test:integration
+npm run test:release
+```
+
+测试覆盖：ΔΔCt 主公式、0-copy 校准品拦截、内参失败不误判、duplex/triplex 分层、自动/人工 NTC、未确认 NTC 拦截、NTC 扩增、校准冲突、一体化工作簿字段顺序与原始 Ct 完整性、样本数不足时不伪造 Confidence/|Z|、QuantStudio 重名 Cq Conf 列解析、384 孔边界，以及去标识的 32 孔 QuantStudio fixture 回放。
+
+### 测试结构
+
+- `tests/core.test.js`：通过公开计算 interface 验证 CNV、QC、NTC、校准和导出行为。
+- `tests/support/cnv-analysis-scenario.js`：深的测试场景 Module；集中把简洁样本描述编译成 QuantStudio-like 记录，并提供 assay、result、issue 和 workbook 查询。
+- `tests/support/quantstudio-fixture.js`：fixture ingest Module；集中完成 workbook → AoA → parse → analyze。
+- `tests/fixtures/quantstudio-32well-deidentified.xlsx`：仓库内可携带、去标识的默认回放文件。
+- `tests/template.integration.test.js`：通过 fixture ingest seam 验证真实文件结构。
+- `tests/release-sync.test.js`：验证根目录主源码与 Sites 发布副本同步。
+
+默认测试不依赖个人电脑路径。需要额外回放某个真实实验导出文件时，可显式提供：
+
+```bash
+CNV_TEMPLATE_XLS=/absolute/path/to/template.xls npm run test:integration
+```
+
+不要把未去标识的实验导出文件提交到 Git。fixture 的生成和隐私说明见 `tests/fixtures/README.md`。
 
 ## 单一源码与发布
 
@@ -103,6 +128,14 @@ node scripts/build-offline-release.mjs --version v1.3
 离线 ZIP 输出到 `offline-release/`；其中包含运行所需的全部 HTML、JavaScript、CSS、SheetJS、本地说明以及 Windows/macOS 启动文件，不依赖 `sites-app`。ZIP 是生成产物，不提交进 Git，正式对外版本建议作为 GitHub Release 附件发布。
 
 推荐发布顺序：修改根目录主源码 → 运行根目录测试 → 同步网页版 → 运行 `sites-app` 测试 → 生成离线 ZIP → 检查 ZIP 内容 → 发布。
+
+`sites-app/node_modules` 是可再生成依赖，不提交到 Git。清理后如需重新开发或发布：
+
+```bash
+cd sites-app
+npm ci
+npm test
+```
 
 ## 方法文档
 
