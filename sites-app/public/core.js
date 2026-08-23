@@ -1,11 +1,17 @@
 (function (root, factory) {
-  var api = factory();
+  var diagnostics = typeof module === "object" && module.exports ? require("./diagnostics.js") : root.CopyNumberDiagnostics;
+  if (!diagnostics) throw new Error("CopyNumberDiagnostics must be loaded before CopyNumberCore.");
+  var api = factory(diagnostics);
   if (typeof module === "object" && module.exports) module.exports = api;
   root.CopyNumberCore = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (diagnostics) {
   "use strict";
 
   var VERSION = "1.3";
+
+  function diagnostic(code, severity, params) {
+    return diagnostics.create(code, severity, params);
+  }
 
   var DEFAULTS = Object.freeze({
     referenceCtMax: 32,
@@ -345,20 +351,16 @@
     });
 
     if (requested && !confirmed) {
-      issues.push({ severity: "blocker", code: "NTC_ASSIGNMENT_UNCONFIRMED", message: "已选择人工 NTC，但尚未确认这些孔在实验中确实未加入模板；本次选择未生效。" });
+      issues.push(diagnostic("NTC_ASSIGNMENT_UNCONFIRMED", "blocker"));
     }
     if (requested && confirmed && !normalizeText(assignment.note)) {
-      issues.push({ severity: "blocker", code: "NTC_ASSIGNMENT_NOTE_MISSING", message: "人工 NTC 缺少可追溯说明；请填写加样记录或实验依据。" });
+      issues.push(diagnostic("NTC_ASSIGNMENT_NOTE_MISSING", "blocker"));
     }
 
     var missingSamples = requestedSamples.filter(function (name) { return !presentSamples[name]; });
     var missingWells = requestedWells.filter(function (well) { return !presentWells[well]; });
     if (confirmed && (missingSamples.length || missingWells.length)) {
-      issues.push({
-        severity: "blocker",
-        code: "NTC_SELECTOR_NOT_FOUND",
-        message: "人工 NTC 中存在导入文件未找到的选择：" + [missingSamples.length ? "样本 " + missingSamples.join("/") : "", missingWells.length ? "孔位 " + missingWells.join("/") : ""].filter(Boolean).join("；") + "。"
-      });
+      issues.push(diagnostic("NTC_SELECTOR_NOT_FOUND", "blocker", { missingSamples: missingSamples, missingWells: missingWells }));
     }
 
     var sampleSelector = {};
@@ -385,11 +387,7 @@
     var manualRows = records.filter(function (record) { return /MANUAL_/.test(record.roleSource); });
     if (manualRows.length) {
       var manualWells = unique(manualRows.map(function (record) { return record.wellPosition || String(record.wellNumber); }));
-      issues.push({
-        severity: "info",
-        code: "MANUAL_NTC_ASSIGNMENT",
-        message: "已人工确认 " + manualWells.length + " 个物理孔为 NTC（" + manualWells.join("、") + "）；原样本名保留，这些孔不参与 CN 计算或校准。"
-      });
+      issues.push(diagnostic("MANUAL_NTC_ASSIGNMENT", "info", { wellCount: manualWells.length, wells: manualWells }));
     }
 
     if (confirmed && useWells && requestedWells.length) {
@@ -402,7 +400,7 @@
         var all = unique(records.filter(function (record) { return record.sampleName === sampleName; }).map(function (record) { return normalizeText(record.wellPosition || record.wellNumber).toUpperCase(); }));
         var selected = all.filter(function (well) { return wellSelector[well]; });
         if (selected.length && selected.length < all.length) {
-          issues.push({ severity: "warning", code: "PARTIAL_SAMPLE_AS_NTC", message: "样本名“" + sampleName + "”仅有 " + selected.length + "/" + all.length + " 个物理孔被指定为 NTC；同名其他孔仍作为分析样本。" });
+          issues.push(diagnostic("PARTIAL_SAMPLE_AS_NTC", "warning", { sampleName: sampleName, selectedCount: selected.length, totalCount: all.length }));
         }
       });
     }
@@ -416,7 +414,7 @@
     Object.keys(byWell).forEach(function (well) {
       var names = unique(byWell[well].map(function (record) { return record.sampleName; }));
       var hasManual = byWell[well].some(function (record) { return /MANUAL_/.test(record.roleSource); });
-      if (hasManual && names.length > 1) issues.push({ severity: "blocker", code: "NTC_WELL_SAMPLE_CONFLICT", message: well + " 孔存在多个样本名，人工 NTC 不能用于掩盖孔位冲突。" });
+      if (hasManual && names.length > 1) issues.push(diagnostic("NTC_WELL_SAMPLE_CONFLICT", "blocker", { well: well, sampleNames: names }));
     });
 
     var ntcSampleLookup = {};
@@ -428,11 +426,11 @@
       if (Array.isArray(config.sampleNames)) calibrationNames = calibrationNames.concat(config.sampleNames);
     });
     var calibrationConflict = unique(calibrationNames).filter(function (name) { return ntcSampleLookup[normalizeName(name)]; });
-    if (calibrationConflict.length) issues.push({ severity: "blocker", code: "NTC_CALIBRATOR_CONFLICT", message: "NTC 与已配置校准样本重叠：" + calibrationConflict.join("、") + "。请重新确认 NTC 后再锁定校准。" });
+    if (calibrationConflict.length) issues.push(diagnostic("NTC_CALIBRATOR_CONFLICT", "blocker", { sampleNames: calibrationConflict }));
 
     var ntcRecords = records.filter(isNtc);
     var analyticalSamples = unique(records.filter(function (record) { return !isNtc(record); }).map(function (record) { return record.sampleName; }).filter(Boolean));
-    if (records.length && !analyticalSamples.length) issues.push({ severity: "blocker", code: "NO_ANALYTICAL_SAMPLES", message: "所有记录都被标记为 NTC，没有可进行 CN 分析的样本。" });
+    if (records.length && !analyticalSamples.length) issues.push(diagnostic("NO_ANALYTICAL_SAMPLES", "blocker"));
     return {
       issues: issues,
       summary: {
@@ -482,11 +480,11 @@
     Object.keys(byWell).forEach(function (well) {
       var rows = byWell[well];
       var samples = unique(rows.map(function (r) { return r.sampleName; }));
-      if (samples.length > 1) issues.push({ severity: "blocker", code: "WELL_SAMPLE_CONFLICT", message: well + " 同一物理孔出现多个样本名：" + samples.join("、") });
+      if (samples.length > 1) issues.push(diagnostic("WELL_SAMPLE_CONFLICT", "blocker", { well: well, sampleNames: samples }));
       var targetCounts = {};
       rows.forEach(function (record) { targetCounts[normalizeKey(record.targetName)] = (targetCounts[normalizeKey(record.targetName)] || 0) + 1; });
       Object.keys(targetCounts).forEach(function (targetKey) {
-        if (targetCounts[targetKey] > 1) issues.push({ severity: "blocker", code: "DUPLICATE_WELL_TARGET", message: well + " 的同一 target 出现 " + targetCounts[targetKey] + " 条记录，无法确定唯一测量。" });
+        if (targetCounts[targetKey] > 1) issues.push(diagnostic("DUPLICATE_WELL_TARGET", "blocker", { well: well, targetKey: targetKey, count: targetCounts[targetKey] }));
       });
       var signature = unique(rows.map(function (r) { return r.targetName; }).filter(Boolean)).sort().join(" + ");
       rows.forEach(function (record) { record.panelSignature = signature; });
@@ -508,13 +506,13 @@
     reporters.forEach(function (reporter) {
       var value = getMetadata(metadata, "Calibration Pure Dye " + reporter + " is expired");
       if (/^(yes|y|true|1|是)$/i.test(normalizeText(value))) {
-        issues.push({ severity: "blocker", code: "EXPIRED_DYE_CALIBRATION", message: reporter + " 纯染料校准已过期，该批数据只能查看，不建议放行。" });
+        issues.push(diagnostic("EXPIRED_DYE_CALIBRATION", "blocker", { reporter: reporter }));
       }
     });
     ["Background", "ROI", "Uniformity"].forEach(function (name) {
       var value = getMetadata(metadata, "Calibration " + name + " is expired");
       if (/^(yes|y|true|1|是)$/i.test(normalizeText(value))) {
-        issues.push({ severity: "blocker", code: "EXPIRED_INSTRUMENT_CALIBRATION", message: name + " 校准已过期。" });
+        issues.push(diagnostic("EXPIRED_INSTRUMENT_CALIBRATION", "blocker", { calibrationName: name }));
       }
     });
     var thresholdByTarget = {};
@@ -527,32 +525,32 @@
     Object.keys(thresholdByTarget).forEach(function (target) {
       var values = unique(thresholdByTarget[target]);
       if (values.length > 1) {
-        issues.push({ severity: "warning", code: "CT_THRESHOLD_INCONSISTENT", message: target + " 在本次运行中使用了多个 Ct threshold：" + values.join("/") + "。请确认同一 assay 的阈值设置是否一致且可追溯。" });
+        issues.push(diagnostic("CT_THRESHOLD_INCONSISTENT", "warning", { target: target, values: values }));
       }
     });
     var baselineOff = records.filter(function (r) { return !r.automaticBaseline; }).length;
-    if (baselineOff) issues.push({ severity: "warning", code: "AUTO_BASELINE_OFF", message: baselineOff + " 条记录没有启用自动基线。" });
+    if (baselineOff) issues.push(diagnostic("AUTO_BASELINE_OFF", "warning", { recordCount: baselineOff }));
     var ntcRecords = records.filter(isNtc);
     if (!ntcRecords.length) {
-      issues.push({ severity: "warning", code: "NO_NTC", message: "未识别或确认 NTC；本次可继续人工复核，但无法据此排除污染或非特异扩增。若实验中确有 NTC 但 plate setup 漏标，可在下方补标；如本次未设置 NTC，软件不能补造。" });
+      issues.push(diagnostic("NO_NTC", "warning"));
     } else {
       var ntcPhysicalWells = unique(ntcRecords.map(function (record) { return record.wellPosition || String(record.wellNumber); }));
-      issues.push({ severity: "info", code: "NTC_RECOGNIZED", message: "已识别 " + ntcPhysicalWells.length + " 个 NTC 物理孔：" + ntcPhysicalWells.join("、") + "。" });
+      issues.push(diagnostic("NTC_RECOGNIZED", "info", { wellCount: ntcPhysicalWells.length, wells: ntcPhysicalWells }));
       var analyticalPanels = unique(records.filter(function (record) { return !isNtc(record) && normalizeKey(record.targetName) !== normalizeKey(referenceName); }).map(function (record) { return record.panelSignature; }).filter(Boolean));
       var ntcPanels = {};
       ntcRecords.forEach(function (record) { ntcPanels[record.panelSignature] = true; });
       var missingNtcPanels = analyticalPanels.filter(function (panel) { return !ntcPanels[panel]; });
-      if (missingNtcPanels.length) issues.push({ severity: "warning", code: "NTC_PANEL_MISSING", message: "以下反应组合没有对应 NTC：" + missingNtcPanels.join("；") + "。本次可继续人工复核，但不能据此排除这些 panel 的污染或非特异扩增。" });
+      if (missingNtcPanels.length) issues.push(diagnostic("NTC_PANEL_MISSING", "warning", { panels: missingNtcPanels }));
     }
     var capacities = plateFormat === 384 ? { rows: 16, columns: 24 } : { rows: 8, columns: 12 };
     records.forEach(function (record) {
       var pos = parseWellPosition(record.wellPosition);
       if (pos && (pos.row > capacities.rows || pos.column > capacities.columns)) {
-        issues.push({ severity: "blocker", code: "WELL_OUTSIDE_PLATE", message: record.wellPosition + " 超出 " + plateFormat + " 孔板范围。" });
+        issues.push(diagnostic("WELL_OUTSIDE_PLATE", "blocker", { well: record.wellPosition, plateFormat: plateFormat }));
       }
       if (pos && record.wellNumber !== null) {
         var expectedWellNumber = (pos.row - 1) * capacities.columns + pos.column;
-        if (expectedWellNumber !== record.wellNumber) issues.push({ severity: "blocker", code: "WELL_NUMBER_MISMATCH", message: record.wellPosition + " 应对应 Well=" + expectedWellNumber + "，但文件记录为 " + record.wellNumber + "。" });
+        if (expectedWellNumber !== record.wellNumber) issues.push(diagnostic("WELL_NUMBER_MISMATCH", "blocker", { well: record.wellPosition, expectedWellNumber: expectedWellNumber, actualWellNumber: record.wellNumber }));
       }
     });
     var reporterByTarget = {};
@@ -562,20 +560,24 @@
     });
     Object.keys(reporterByTarget).forEach(function (target) {
       var targetReporters = Object.keys(reporterByTarget[target]);
-      if (targetReporters.length > 1) issues.push({ severity: "blocker", code: "REPORTER_MAPPING_CONFLICT", message: target + " 在同一文件中对应多个 reporter：" + targetReporters.join("/") + "。" });
+      if (targetReporters.length > 1) issues.push(diagnostic("REPORTER_MAPPING_CONFLICT", "blocker", { target: target, reporters: targetReporters }));
     });
     var ntcDetected = records.filter(function (record) { return isNtc(record) && record.ct !== null; });
     if (ntcDetected.length) {
       var ntcDetails = ntcDetected.slice(0, 8).map(function (record) { return (record.wellPosition || record.wellNumber) + "/" + record.targetName + " Ct=" + round(record.ct, 3); });
-      issues.push({ severity: "blocker", code: "NTC_AMPLIFICATION", message: "NTC 的 target 或内参通道出现数值 Ct：" + ntcDetails.join("；") + (ntcDetected.length > 8 ? "；另有 " + (ntcDetected.length - 8) + " 条" : "") + "。需排查污染、非特异扩增或 NTC 误标。" });
+      issues.push(diagnostic("NTC_AMPLIFICATION", "blocker", { details: ntcDetails, additionalCount: Math.max(0, ntcDetected.length - 8) }));
     }
     var sourceFlagCounts = { THOLDFAIL: 0, CQCONF: 0, NOAMP: 0, EXPFAIL: 0 };
     records.forEach(function (record) {
       Object.keys(sourceFlagCounts).forEach(function (flag) { if (record.flags && record.flags[flag]) sourceFlagCounts[flag] += 1; });
     });
     var presentFlags = Object.keys(sourceFlagCounts).filter(function (flag) { return sourceFlagCounts[flag] > 0; });
-    if (presentFlags.length) issues.push({ severity: "warning", code: "SOURCE_FLAGS_PRESENT", message: "仪器原始 flags：" + presentFlags.map(function (flag) { return flag + "=" + sourceFlagCounts[flag]; }).join("；") + "。本工具保留全部 flags，不会仅凭单一 flag 静默删孔。" });
-    if (!referenceName) issues.push({ severity: "blocker", code: "NO_REFERENCE_ASSAY", message: "无法确定内参 assay。" });
+    if (presentFlags.length) {
+      var presentFlagCounts = {};
+      presentFlags.forEach(function (flag) { presentFlagCounts[flag] = sourceFlagCounts[flag]; });
+      issues.push(diagnostic("SOURCE_FLAGS_PRESENT", "warning", { counts: presentFlagCounts }));
+    }
+    if (!referenceName) issues.push(diagnostic("NO_REFERENCE_ASSAY", "blocker"));
     return issues;
   }
 
@@ -634,7 +636,7 @@
 
   function fitPopulationCalibration(values, expectedModeCopy, maxCopyNumber) {
     var xs = values.slice().filter(function (v) { return isFinite(v); });
-    if (!xs.length) return { ok: false, reason: "没有可用的非零拷贝样本。" };
+    if (!xs.length) return { ok: false, diagnostic: diagnostic("POPULATION_NO_NONZERO_SAMPLES", "blocker") };
     var modeCopy = Math.max(1, Math.round(expectedModeCopy || 2));
     var k0 = median(xs) + Math.log(modeCopy) / Math.log(2);
     var best = null;
@@ -665,7 +667,7 @@
       }, 0);
       if (!best || logLikelihood > best.logLikelihood) best = { ok: true, K: K, sigma: sigma, priors: priors, logLikelihood: logLikelihood, observedMode: observedMode };
     }
-    return best || { ok: false, reason: "无法在给定的众数拷贝数下拟合群体模型。" };
+    return best || { ok: false, diagnostic: diagnostic("POPULATION_MODEL_FIT_FAILED", "blocker", { expectedModeCopy: modeCopy }) };
   }
 
   function fitQualityModel(results, settings, calibration) {
@@ -674,7 +676,11 @@
     eligible.forEach(function (r) { counts[r.predictedCopyNumber] = (counts[r.predictedCopyNumber] || 0) + 1; });
     var largest = Object.keys(counts).reduce(function (m, key) { return Math.max(m, counts[key]); }, 0);
     if (largest < settings.minimumConfidenceGroupSize) {
-      return { ok: false, reason: "至少需要 " + settings.minimumConfidenceGroupSize + " 个相同拷贝数的样本；当前最大类别仅 " + largest + " 个。", counts: counts };
+      return {
+        ok: false,
+        diagnostic: diagnostic("QUALITY_GROUP_SIZE_INSUFFICIENT", "info", { minimum: settings.minimumConfidenceGroupSize, largestGroup: largest }),
+        counts: counts
+      };
     }
     var groups = Object.keys(counts).map(Number).sort(function (a, b) { return counts[b] - counts[a]; });
     var E = 1;
@@ -701,7 +707,7 @@
     var denom = eligible.length + alpha * settings.maxCopyNumber;
     var priors = {};
     for (var cn = 1; cn <= settings.maxCopyNumber; cn += 1) priors[cn] = ((counts[cn] || 0) + alpha) / denom;
-    return { ok: true, K: K, E: E, sigma: sigma, priors: priors, counts: counts, note: "透明高斯后验估计，未实施 CopyCaller 的 bootstrap 5% 下限。" };
+    return { ok: true, K: K, E: E, sigma: sigma, priors: priors, counts: counts, note: diagnostic("QUALITY_MODEL_TRANSPARENT_APPROXIMATION", "info") };
   }
 
   function posteriorForCopy(x, assigned, model, maxCopyNumber) {
@@ -858,21 +864,21 @@
     assay.results.forEach(function (result) { lookup[result.sampleName] = result; });
     if (recordedReference) {
       var recorded = lookup[recordedReference];
-      if (!recorded) guard.warnings.push("导出文件记录的 Reference Sample“" + recordedReference + "”不在该 assay 中。请改选本板通过资格检查且已独立确认 CN 的备用校准品或校准组。");
-      else if (!recorded.calibrationEligible) guard.warnings.push("原运行设置中的 Reference Sample“" + recordedReference + "”不符合 " + assay.targetName + " 校准资格，已禁止自动继承。请改选本板通过检查且已独立确认 CN 的备用校准品或校准组；不会从普通样本中自动替换。");
-      else guard.warnings.push("原运行 Reference Sample“" + recordedReference + "”仅作历史记录；未经独立拷贝数确认前不会自动启用。");
+      if (!recorded) guard.warnings.push(diagnostic("RECORDED_REFERENCE_NOT_IN_ASSAY", "warning", { referenceSample: recordedReference, target: assay.targetName }));
+      else if (!recorded.calibrationEligible) guard.warnings.push(diagnostic("RECORDED_REFERENCE_INELIGIBLE", "warning", { referenceSample: recordedReference, target: assay.targetName }));
+      else guard.warnings.push(diagnostic("RECORDED_REFERENCE_HISTORY_ONLY", "warning", { referenceSample: recordedReference, target: assay.targetName }));
     }
     if (guard.mode === "none") {
-      guard.errors.push("未配置校准方式。");
+      guard.errors.push(diagnostic("CALIBRATION_MODE_MISSING", "blocker"));
       return guard;
     }
     if (guard.mode === "sample") {
       var result = lookup[config.sampleName];
       var cn = toNumber(config.copyNumber);
-      if (!result) guard.errors.push("所选校准样本不存在。");
-      else if (!result.calibrationEligible) guard.errors.push("所选校准样本未通过资格检查（目标未扩增、内参无效、复孔不足或 SD 超限）。");
-      if (!(cn > 0)) guard.errors.push("校准样本拷贝数必须 >0。");
-      if (!config.independentlyConfirmed) guard.errors.push("必须确认该校准样本的拷贝数已由独立依据确认。");
+      if (!result) guard.errors.push(diagnostic("CALIBRATOR_SAMPLE_NOT_FOUND", "blocker", { sampleName: config.sampleName || "" }));
+      else if (!result.calibrationEligible) guard.errors.push(diagnostic("CALIBRATOR_SAMPLE_INELIGIBLE", "blocker", { sampleName: config.sampleName || "" }));
+      if (!(cn > 0)) guard.errors.push(diagnostic("CALIBRATOR_COPY_NUMBER_INVALID", "blocker", { copyNumber: config.copyNumber }));
+      if (!config.independentlyConfirmed) guard.errors.push(diagnostic("CALIBRATOR_CONFIRMATION_REQUIRED", "blocker", { sampleName: config.sampleName || "" }));
       if (!guard.errors.length) {
         guard.ok = true;
         guard.calibratorDeltaCt = result.meanDeltaCt;
@@ -886,10 +892,10 @@
       var names = Array.isArray(config.sampleNames) ? config.sampleNames : [];
       var group = names.map(function (name) { return lookup[name]; }).filter(Boolean);
       var groupCn = toNumber(config.copyNumber);
-      if (group.length < 2) guard.errors.push("已知校准组至少需要 2 个样本。");
-      if (group.some(function (r) { return !r.calibrationEligible; })) guard.errors.push("校准组中存在未通过资格检查的样本。");
-      if (!(groupCn > 0)) guard.errors.push("校准组拷贝数必须 >0。");
-      if (!config.independentlyConfirmed) guard.errors.push("必须确认该组样本的拷贝数已由独立依据确认。");
+      if (group.length < 2) guard.errors.push(diagnostic("CALIBRATOR_GROUP_TOO_SMALL", "blocker", { minimum: 2, actual: group.length }));
+      if (group.some(function (r) { return !r.calibrationEligible; })) guard.errors.push(diagnostic("CALIBRATOR_GROUP_INELIGIBLE", "blocker"));
+      if (!(groupCn > 0)) guard.errors.push(diagnostic("CALIBRATOR_GROUP_COPY_NUMBER_INVALID", "blocker", { copyNumber: config.copyNumber }));
+      if (!config.independentlyConfirmed) guard.errors.push(diagnostic("CALIBRATOR_GROUP_CONFIRMATION_REQUIRED", "blocker"));
       if (!guard.errors.length) {
         var groupDelta = mean(group.map(function (r) { return r.meanDeltaCt; }));
         guard.ok = true;
@@ -902,23 +908,23 @@
     }
     if (guard.mode === "population") {
       var population = assay.results.filter(function (r) { return r.classification === "NONZERO" && r.validCount >= settings.minReplicates && r.meanDeltaCt !== null; });
-      if (population.length < settings.minimumPopulationSamples) guard.errors.push("群体校准至少需要 " + settings.minimumPopulationSamples + " 个非零拷贝可用样本；当前仅 " + population.length + " 个。");
+      if (population.length < settings.minimumPopulationSamples) guard.errors.push(diagnostic("POPULATION_SAMPLE_COUNT_INSUFFICIENT", "blocker", { minimum: settings.minimumPopulationSamples, actual: population.length }));
       var expected = Math.round(toNumber(config.expectedMostFrequentCopyNumber) || 0);
-      if (expected < 1) guard.errors.push("预期众数拷贝数必须为正整数；0-copy 不参与对数模型拟合。");
+      if (expected < 1) guard.errors.push(diagnostic("POPULATION_EXPECTED_MODE_INVALID", "blocker", { expectedMostFrequentCopyNumber: config.expectedMostFrequentCopyNumber }));
       if (!guard.errors.length) {
         var fit = fitPopulationCalibration(population.map(function (r) { return r.meanDeltaCt; }), expected, settings.maxCopyNumber);
-        if (!fit.ok) guard.errors.push(fit.reason);
+        if (!fit.ok) guard.errors.push(fit.diagnostic);
         else {
           guard.ok = true;
           guard.K = fit.K;
           guard.populationFit = fit;
           guard.label = "群体最大似然近似（众数 CN=" + expected + "）";
-          guard.warnings.push("该结果为公开原理的透明近似，不保证与 CopyCaller 官方软件逐值一致。");
+          guard.warnings.push(diagnostic("POPULATION_APPROXIMATION", "warning"));
         }
       }
       return guard;
     }
-    guard.errors.push("不支持的校准方式：" + guard.mode);
+    guard.errors.push(diagnostic("CALIBRATION_MODE_UNSUPPORTED", "blocker", { mode: guard.mode }));
     return guard;
   }
 
@@ -1001,13 +1007,20 @@
     var recordedReference = normalizeName(getMetadata(metadata, "Reference Sample"));
     assays.forEach(function (assay) {
       assay.calibrationCandidates = assay.results.map(function (result) {
+        var candidateDiagnostic = result.calibrationEligible
+          ? diagnostic("CALIBRATION_CANDIDATE_ELIGIBLE", "info")
+          : (result.classification !== "NONZERO"
+            ? diagnostic("CALIBRATION_CANDIDATE_NONZERO_REQUIRED", "blocker", { classification: result.classification })
+            : (result.validCount < settings.minReplicates
+              ? diagnostic("CALIBRATION_CANDIDATE_REPLICATES_INSUFFICIENT", "blocker", { minimum: settings.minReplicates, actual: result.validCount })
+              : diagnostic("CALIBRATION_CANDIDATE_SD_EXCEEDED", "blocker", { maximum: settings.calibratorMaxSd, actual: result.deltaCtSd })));
         return {
           sampleName: result.sampleName,
           eligible: result.calibrationEligible,
           classification: result.classification,
           validCount: result.validCount,
           deltaCtSd: result.deltaCtSd,
-          reason: result.calibrationEligible ? "可选，仍需独立确认已知拷贝数" : (result.classification !== "NONZERO" ? "目标非稳定非零扩增" : (result.validCount < settings.minReplicates ? "有效复孔不足" : "复孔 SD 超过校准品限值"))
+          diagnostic: candidateDiagnostic
         };
       });
       assay.calibration = calibrationForAssay(assay, settings, recordedReference);
@@ -1024,7 +1037,7 @@
     });
     Object.keys(targetPanelMap).forEach(function (target) {
       var panels = Object.keys(targetPanelMap[target]);
-      if (panels.length > 1) runIssues.push({ severity: settings.splitPanels ? "info" : "warning", code: "TARGET_IN_MULTIPLE_PANELS", message: target + " 出现在 " + panels.length + " 种反应组合中：" + panels.join("；") + (settings.splitPanels ? "。已按反应组合分开分析。" : "。当前已合并，需确认桥接验证。") });
+      if (panels.length > 1) runIssues.push(diagnostic("TARGET_IN_MULTIPLE_PANELS", settings.splitPanels ? "info" : "warning", { target: target, panelCount: panels.length, panels: panels, splitPanels: settings.splitPanels }));
     });
     var calibrationBlocked = assays.some(function (assay) { return !assay.calibration.ok; });
     var releaseBlocked = calibrationBlocked || runIssues.some(function (issue) { return issue.severity === "blocker"; });
@@ -1369,10 +1382,10 @@
         "校准标签": assay.calibration.label || "",
         "K": assay.calibration.K,
         "仪器记录 Reference Sample": assay.calibration.recordedReference,
-        "错误": assay.calibration.errors.join("; "),
-        "警告": assay.calibration.warnings.join("; "),
+        "错误": diagnostics.formatMany(assay.calibration.errors),
+        "警告": diagnostics.formatMany(assay.calibration.warnings),
         "板内 ΔCt SD": assay.plateDeltaCtSd,
-        "质量模型": assay.qualityModel && assay.qualityModel.ok ? "available" : (assay.qualityModel ? assay.qualityModel.reason : "not fitted"),
+        "质量模型": assay.qualityModel && assay.qualityModel.ok ? "available" : (assay.qualityModel ? diagnostics.format(assay.qualityModel.diagnostic) : "not fitted"),
         "Run ID": audit.runId,
         "Plate ID": audit.plateId,
         "Analysis ID": audit.analysisId
@@ -1407,9 +1420,9 @@
       rows.push({
         "QC 项目": "校准：" + assay.targetName,
         "检查对象": assay.panelSignature,
-        "观察结果": assay.calibration.label || assay.calibration.errors.join("; "),
+        "观察结果": assay.calibration.label || diagnostics.formatMany(assay.calibration.errors),
         "状态": assay.calibration.ok ? "PASS" : "FAIL",
-        "说明/建议": assay.calibration.warnings.join("; "),
+        "说明/建议": diagnostics.formatMany(assay.calibration.warnings),
         "Run ID": audit.runId,
         "Plate ID": audit.plateId,
         "Analysis ID": audit.analysisId
@@ -1419,7 +1432,7 @@
       rows.push({
         "QC 项目": issue.code,
         "检查对象": "板级结构/仪器元数据",
-        "观察结果": issue.message,
+        "观察结果": diagnostics.format(issue),
         "状态": issue.severity === "blocker" ? "FAIL" : (issue.severity === "warning" ? "WARNING" : "INFO"),
         "说明/建议": "按实验室 SOP 与原始扩增曲线复核。",
         "Run ID": audit.runId,

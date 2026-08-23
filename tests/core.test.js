@@ -213,8 +213,8 @@ test("an ineligible recorded reference can be replaced only by a confirmed eligi
   const assay = scenario.assay();
   assert.equal(assay.calibration.ok, true);
   assert.equal(assay.calibration.config.sampleName, "Backup");
-  assert.match(assay.calibration.warnings.join(" "), /禁止自动继承/);
-  assert.match(assay.calibration.warnings.join(" "), /备用校准品/);
+  assert.deepEqual(assay.calibration.warnings.map((item) => item.code), ["RECORDED_REFERENCE_INELIGIBLE"]);
+  assert.equal(assay.calibration.warnings[0].params.referenceSample, "Primary failed");
   assert.equal(scenario.analysis.releaseStatus, "READY_FOR_REVIEW");
 });
 
@@ -232,8 +232,8 @@ test("a zero-copy target cannot be selected as calibrator", () => {
   assert.equal(wrong.classification, "ZERO");
   assert.equal(wrong.calibrationEligible, false);
   assert.equal(assay.calibration.ok, false);
-  assert.match(assay.calibration.errors.join(" "), /未通过资格检查/);
-  assert.match(assay.calibration.warnings.join(" "), /禁止自动继承/);
+  assert.ok(assay.calibration.errors.some((item) => item.code === "CALIBRATOR_SAMPLE_INELIGIBLE"));
+  assert.ok(assay.calibration.warnings.some((item) => item.code === "RECORDED_REFERENCE_INELIGIBLE"));
 });
 
 test("reference failure is invalid and is never converted to zero copy", () => {
@@ -271,7 +271,8 @@ test("confidence-like and z-score remain unavailable below seven same-CN samples
   });
   const assay = scenario.assay();
   assert.equal(assay.qualityModel.ok, false);
-  assert.match(assay.qualityModel.reason, /最大类别仅 6/);
+  assert.equal(assay.qualityModel.diagnostic.code, "QUALITY_GROUP_SIZE_INSUFFICIENT");
+  assert.deepEqual(assay.qualityModel.diagnostic.params, { minimum: 7, largestGroup: 6 });
   assert.ok(assay.results.every((x) => x.confidenceLike === null && x.absoluteZScore === null));
   const statuses = scenario.workbook({ registration: { runId: "RUN-METRICS", analysisId: "A-METRICS", assays: [] } }).sheet("CN计算明细").rows.map((row) => row["结果状态"]);
   assert.ok(statuses.every((status) => status === "Confidence/Z-score 暂不可计算（同 CN 样本少于 7 个；不影响 CN 判定）"));
@@ -304,7 +305,8 @@ test("population calibration is blocked when too few nonzero samples are availab
   });
   const assay = scenario.assay();
   assert.equal(assay.calibration.ok, false);
-  assert.match(assay.calibration.errors.join(" "), /当前仅 3 个/);
+  const diagnostic = assay.calibration.errors.find((item) => item.code === "POPULATION_SAMPLE_COUNT_INSUFFICIENT");
+  assert.deepEqual(diagnostic.params, { minimum: 5, actual: 3 });
 });
 
 test("an automatically labelled NTC is excluded from samples and remains auditable", () => {
@@ -382,7 +384,7 @@ test("missing NTC coverage for one reaction panel is a warning", () => {
   });
   const issue = scenario.issue("NTC_PANEL_MISSING");
   assert.equal(issue.severity, "warning");
-  assert.match(issue.message, /EXTRA/);
+  assert.ok(issue.params.panels.some((panel) => /EXTRA/.test(panel)));
 });
 
 test("manual well-level NTC applies to every row in the physical well and warns on a partial sample", () => {
@@ -417,8 +419,8 @@ test("any numeric target or reference Ct in NTC is a release blocker", () => {
   assert.equal(scenario.assay().calibration.ok, true);
   const issue = scenario.issue("NTC_AMPLIFICATION");
   assert.equal(issue.severity, "blocker");
-  assert.match(issue.message, /A3\/TARGET Ct=34/);
-  assert.match(issue.message, /A4\/RNaseP Ct=31/);
+  assert.ok(issue.params.details.includes("A3/TARGET Ct=34"));
+  assert.ok(issue.params.details.includes("A4/RNaseP Ct=31"));
   assert.equal(scenario.analysis.releaseStatus, "HOLD");
 });
 

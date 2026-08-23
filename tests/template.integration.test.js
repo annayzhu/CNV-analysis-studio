@@ -22,7 +22,7 @@ test("the 32-well QuantStudio fixture is parsed and guarded correctly", () => {
   const gstm1 = analysis.assays.find((x) => x.targetName === "GSTM1");
   assert.equal(gstm1.results.find((x) => x.sampleName === "Sample 1").classification, "ZERO");
   assert.equal(gstm1.results.find((x) => x.sampleName === "Sample 1").calibrationEligible, false);
-  assert.match(gstm1.calibration.warnings.join(" "), /禁止自动继承/);
+  assert.ok(gstm1.calibration.warnings.some((item) => item.code === "RECORDED_REFERENCE_INELIGIBLE"));
   assert.equal(gstm1.results.find((x) => x.sampleName === "Sample 8").classification, "INVALID");
 });
 

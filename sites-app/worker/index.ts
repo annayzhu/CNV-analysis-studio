@@ -19,13 +19,7 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
-const staticAssetPaths = new Set([
-  "/index.html",
-  "/styles.css",
-  "/core.js",
-  "/app.js",
-  "/vendor/xlsx.full.min.js",
-]);
+const staticAssetPath = /\.(?:html|css|js|png)$/i;
 
 function fetchAsset(request: Request, env: Env, pathname?: string): Promise<Response> {
   if (!pathname) return env.ASSETS.fetch(request);
@@ -49,7 +43,7 @@ const worker = {
       return fetchAsset(request, env, "/index.html");
     }
 
-    if (staticAssetPaths.has(url.pathname)) {
+    if (staticAssetPath.test(url.pathname)) {
       return fetchAsset(request, env);
     }
 

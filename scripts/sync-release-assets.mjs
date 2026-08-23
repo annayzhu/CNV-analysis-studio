@@ -3,6 +3,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { BROWSER_ASSETS, renderSiteHtml } from "./release-assets.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const checkOnly = process.argv.includes("--check");
@@ -12,43 +13,11 @@ if (unknownArgs.length > 0) {
   throw new Error(`Unknown argument(s): ${unknownArgs.join(", ")}`);
 }
 
-const offlineComment =
-  "<!-- 本地离线入口：请与 styles.css、app.js、core.js 和 vendor 文件夹一起使用。 -->\n";
-const descriptionMeta =
-  '  <meta name="description" content="基于 CopyCaller 公开原理的 qPCR CNV 分析工具">\n';
-const siteMetadata = [
-  '  <meta property="og:title" content="CNV分析工具 / CNV Analysis Tool">',
-  '  <meta property="og:description" content="从孔级 Ct 到样本级拷贝数，支持 qPCR CNV 计算、质控、校准与实验记录导出。">',
-  '  <meta property="og:type" content="website">',
-  '  <meta property="og:image" content="/og.png">',
-  '  <meta name="twitter:card" content="summary_large_image">',
-  '  <meta name="twitter:image" content="/og.png">',
-].join("\n") + "\n";
-
-function renderSiteHtml(offlineHtml) {
-  if (!offlineHtml.includes(offlineComment)) {
-    throw new Error("cnvtool.html is missing the expected offline-entry comment");
-  }
-  if (!offlineHtml.includes(descriptionMeta)) {
-    throw new Error("cnvtool.html is missing the expected description metadata");
-  }
-
-  return offlineHtml
-    .replace(offlineComment, "")
-    .replace(descriptionMeta, descriptionMeta + siteMetadata);
-}
-
 async function expectedOutputs() {
-  const sharedAssets = [
-    ["styles.css", "sites-app/public/styles.css"],
-    ["app.js", "sites-app/public/app.js"],
-    ["core.js", "sites-app/public/core.js"],
-    ["vendor/xlsx.full.min.js", "sites-app/public/vendor/xlsx.full.min.js"],
-  ];
   const outputs = [];
 
-  for (const [source, target] of sharedAssets) {
-    outputs.push({ target, content: await readFile(path.join(projectRoot, source)) });
+  for (const asset of BROWSER_ASSETS) {
+    outputs.push({ target: asset.siteTarget, content: await readFile(path.join(projectRoot, asset.source)) });
   }
 
   const offlineHtml = await readFile(path.join(projectRoot, "cnvtool.html"), "utf8");

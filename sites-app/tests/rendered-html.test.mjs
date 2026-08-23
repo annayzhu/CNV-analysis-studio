@@ -58,6 +58,7 @@ test("serves the CNV analyzer at the site root", async () => {
   assert.match(html, /id="record-save-status"/i);
   assert.match(html, /导出完整实验记录 XLSX/i);
   assert.match(html, /vendor\/xlsx\.full\.min\.js/i);
+  assert.match(html, /diagnostics\.js/i);
   assert.match(html, /core\.js/i);
   assert.match(html, /app\.js/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
@@ -66,6 +67,7 @@ test("serves the CNV analyzer at the site root", async () => {
 test("packages every browser-side dependency", async () => {
   for (const pathname of [
     "/styles.css",
+    "/diagnostics.js",
     "/core.js",
     "/app.js",
     "/vendor/xlsx.full.min.js",

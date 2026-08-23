@@ -1,6 +1,7 @@
 (function () {
   "use strict";
 
+  var diagnostics = window.CopyNumberDiagnostics;
   var core = window.CopyNumberCore;
   var REGISTRATION_STORAGE_KEY = "cnv-analysis-registration-presets-v1";
   var REGISTRATION_RECORDS_STORAGE_KEY = "cnv-analysis-registration-records-v1";
@@ -408,9 +409,10 @@
     var a = state.analysis;
     var referenceWarnings = [];
     a.assays.forEach(function (assay) {
-      (assay.calibration.warnings || []).forEach(function (message) {
+      (assay.calibration.warnings || []).forEach(function (warning) {
+        var message = diagnostics.format(warning);
         var assayLabel = assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : "");
-        if (/原运行|Reference Sample/.test(message)) referenceWarnings.push(assayLabel + "：" + message);
+        if (/^RECORDED_REFERENCE_/.test(warning.code)) referenceWarnings.push(assayLabel + "：" + message);
       });
     });
     var banner = $("#critical-banner");
@@ -431,7 +433,7 @@
       var icon = severity === "blocker" ? "!" : (severity === "warning" ? "!" : "i");
       return '<div class="qc-item qc-item--' + severity + '">' +
         '<span class="qc-item__icon">' + icon + "</span>" +
-        "<div><strong>" + escapeHtml(issueTitle(issue)) + "</strong><p>" + escapeHtml(issue.message) + "</p></div>" +
+        "<div><strong>" + escapeHtml(issueTitle(issue)) + "</strong><p>" + escapeHtml(diagnostics.format(issue)) + "</p></div>" +
         '<span class="qc-item__code">' + escapeHtml(issue.code) + "</span></div>";
     }).join("");
   }
@@ -619,7 +621,7 @@
       var candidateOptions = assay.calibrationCandidates.map(function (candidate) {
         var selected = config.sampleName === candidate.sampleName ? " selected" : "";
         var disabled = candidate.eligible ? "" : " disabled";
-        return '<option value="' + escapeAttr(candidate.sampleName) + '"' + selected + disabled + ">" + escapeHtml(candidate.sampleName + (candidate.eligible ? " · 可选" : " · 禁止：" + candidate.reason)) + "</option>";
+        return '<option value="' + escapeAttr(candidate.sampleName) + '"' + selected + disabled + ">" + escapeHtml(candidate.sampleName + (candidate.eligible ? " · 可选" : " · 禁止：" + diagnostics.format(candidate.diagnostic))) + "</option>";
       }).join("");
       var candidateRows = assay.calibrationCandidates.map(function (candidate) {
         var selected = (config.sampleNames || []).indexOf(candidate.sampleName) >= 0 ? " checked" : "";
@@ -629,8 +631,8 @@
           '<span class="candidate-badge ' + (candidate.eligible ? "candidate-badge--ok" : "candidate-badge--no") + '">' + (candidate.eligible ? "可选" : "禁止") + "</span></label>";
       }).join("");
       var notices = [];
-      (assay.calibration.warnings || []).forEach(function (message) { notices.push('<div class="guard-message guard-message--warning">' + escapeHtml(message) + "</div>"); });
-      (assay.calibration.errors || []).forEach(function (message) { notices.push('<div class="guard-message guard-message--error">' + escapeHtml(message) + "</div>"); });
+      (assay.calibration.warnings || []).forEach(function (warning) { notices.push('<div class="guard-message guard-message--warning">' + escapeHtml(diagnostics.format(warning)) + "</div>"); });
+      (assay.calibration.errors || []).forEach(function (error) { notices.push('<div class="guard-message guard-message--error">' + escapeHtml(diagnostics.format(error)) + "</div>"); });
       if (assay.calibration.ok) notices.push('<div class="guard-message guard-message--ok">校准已锁定：' + escapeHtml(assay.calibration.label) + "</div>");
       var samplePanel = '<div class="calibration-fields"><label class="calibration-field"><span>校准样本</span><select class="cal-sample"><option value="">请选择…</option>' + candidateOptions + '</select></label><label class="calibration-field"><span>已知 CN</span><input class="cal-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.copyNumber || 2) + '"></label></div><label class="confirm-line"><input class="cal-confirmed" type="checkbox"' + (config.independentlyConfirmed ? " checked" : "") + '><span>我确认该样本对当前 target / panel 的拷贝数已由独立方法或可追溯记录确认。</span></label>';
       var groupPanel = '<label class="calibration-field"><span>选择同一已知 CN 的校准组</span><div class="candidate-list">' + candidateRows + '</div></label><div class="calibration-fields"><label class="calibration-field"><span>该组已知 CN</span><input class="cal-group-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.copyNumber || 2) + '"></label></div><label class="confirm-line"><input class="cal-group-confirmed" type="checkbox"' + (config.independentlyConfirmed ? " checked" : "") + '><span>我确认所选样本具有相同、已知且独立确认的拷贝数。</span></label>';
@@ -984,7 +986,7 @@
     });
     svg.push('<line x1="' + margin.left + '" y1="' + (height - margin.bottom) + '" x2="' + (width - margin.right) + '" y2="' + (height - margin.bottom) + '" stroke="#71808a"/>');
     svg.push('<text x="' + ((margin.left + width - margin.right) / 2) + '" y="' + (height - 10) + '" text-anchor="middle" font-size="12">ΔCt = Ct(target) − Ct(reference)</text></svg>');
-    var modelNote = assay.qualityModel && !assay.qualityModel.ok ? assay.qualityModel.reason : "虚线为校准模型下的整数 CN 理论中心。";
+    var modelNote = assay.qualityModel && !assay.qualityModel.ok ? diagnostics.format(assay.qualityModel.diagnostic) : "虚线为校准模型下的整数 CN 理论中心。";
     el.innerHTML = '<h3 class="chart-title">' + escapeHtml(assay.targetName + " · 样本级 ΔCt") + '</h3><p class="chart-subtitle">' + escapeHtml(modelNote || "") + "</p>" + svg.join("");
   }
 
@@ -1054,7 +1056,7 @@
     var a = state.analysis;
     var ntc = a.ntcSummary || { detected: false, physicalWellCount: 0, assignment: {} };
     var confidenceNotes = a.assays.map(function (assay) {
-      var note = assay.qualityModel && !assay.qualityModel.ok ? assay.qualityModel.reason : (assay.qualityModel && assay.qualityModel.note ? assay.qualityModel.note : "未校准或无可用数据。");
+      var note = assay.qualityModel && !assay.qualityModel.ok ? diagnostics.format(assay.qualityModel.diagnostic) : (assay.qualityModel && assay.qualityModel.note ? diagnostics.format(assay.qualityModel.note) : "未校准或无可用数据。");
       return "<li><strong>" + escapeHtml(assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : "")) + "：</strong>" + escapeHtml(note) + "</li>";
     }).join("");
     $("#method-notes").innerHTML =
