@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { OFFLINE_PACKAGE_ASSETS } from "./release-assets.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
@@ -62,15 +63,7 @@ const packageDir = path.join(temporaryRoot, packageName);
 try {
   await mkdir(path.join(packageDir, "vendor"), { recursive: true });
 
-  for (const relativePath of [
-    "cnvtool.html",
-    "styles.css",
-    "app.js",
-    "core.js",
-    "vendor/xlsx.full.min.js",
-    "README.md",
-    "THIRD_PARTY_NOTICES.md",
-  ]) {
+  for (const relativePath of OFFLINE_PACKAGE_ASSETS) {
     await copyFile(path.join(projectRoot, relativePath), path.join(packageDir, relativePath));
   }
 
@@ -106,7 +99,7 @@ try {
 
 - 所有计算均在当前浏览器本地完成，实验数据不会上传服务器。
 - “保存本次登记”保存在当前电脑的当前浏览器中；换电脑、换浏览器或清除浏览器数据后不会自动同步。
-- 请保持 cnvtool.html、app.js、core.js、styles.css 和 vendor 文件夹的相对位置不变。
+- 请保持 cnvtool.html、diagnostics.js、app.js、core.js、styles.css 和 vendor 文件夹的相对位置不变。
 - 本工具仅供科研使用（RUO），不用于诊断、治疗选择或个体临床决策。
 - 压缩包不包含任何样本数据或实验结果。
 

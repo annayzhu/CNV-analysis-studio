@@ -2,7 +2,7 @@
 
 这个目录用于将本地 CNV 分析器发布到 OpenAI Sites。实际分析界面位于 `public/`，包含的文件与发布时通过测试的本地版本一致。
 
-`public/index.html`、`public/styles.css`、`public/app.js`、`public/core.js` 和 `public/vendor/xlsx.full.min.js` 是由项目根目录主源码生成的发布副本，不应在这里单独修改。更新根目录源码后，请在项目根目录运行：
+`public/index.html`、`public/styles.css`、`public/diagnostics.js`、`public/app.js`、`public/core.js` 和 `public/vendor/xlsx.full.min.js` 是由项目根目录主源码生成的发布副本，不应在这里单独修改。资产清单只在 `scripts/release-assets.mjs` 维护；更新根目录源码后，请在项目根目录运行：
 
 ```bash
 node scripts/sync-release-assets.mjs

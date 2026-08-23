@@ -93,7 +93,8 @@ npm run test:release
 - `tests/support/quantstudio-fixture.js`：fixture ingest Module；集中完成 workbook → AoA → parse → analyze。
 - `tests/fixtures/quantstudio-32well-deidentified.xlsx`：仓库内可携带、去标识的默认回放文件。
 - `tests/template.integration.test.js`：通过 fixture ingest seam 验证真实文件结构。
-- `tests/release-sync.test.js`：验证根目录主源码与 Sites 发布副本同步。
+- `tests/diagnostics.test.js`：验证稳定的诊断 code/params interface 与中文展示 adapter。
+- `tests/release-sync.test.js`：验证单一发布资产清单、离线 HTML 依赖和 Sites 发布副本同步。
 
 默认测试不依赖个人电脑路径。需要额外回放某个真实实验导出文件时，可显式提供：
 
@@ -105,7 +106,7 @@ CNV_TEMPLATE_XLS=/absolute/path/to/template.xls npm run test:integration
 
 ## 单一源码与发布
 
-根目录中的 `cnvtool.html`、`styles.css`、`app.js`、`core.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。不要直接修改 `sites-app/public` 中的同名发布副本。
+根目录中的 `cnvtool.html`、`styles.css`、`diagnostics.js`、`app.js`、`core.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。发布资产清单只在 `scripts/release-assets.mjs` 维护；不要直接修改 `sites-app/public` 中的同名发布副本。
 
 修改主源码后，同步网页版发布文件：
 
