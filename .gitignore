@@ -40,6 +40,6 @@ private-data/
 input-data/
 uploads/
 
-# Generated archives and local history backup
-offline-release/*.zip
+# Generated release artifacts and local history backup
+offline-release/
 sites-app-history.bundle

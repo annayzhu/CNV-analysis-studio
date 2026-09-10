@@ -130,15 +130,16 @@ node scripts/build-offline-release.mjs --version v1.3
 
 推荐发布顺序：修改根目录主源码 → 运行根目录测试 → 同步网页版 → 运行 `sites-app` 测试 → 生成离线 ZIP → 检查 ZIP 内容 → 发布。
 
-`sites-app/node_modules` 是可再生成依赖，不提交到 Git。清理后如需重新开发或发布：
+`sites-app` 现在是零第三方依赖的静态交付 Adapter。它只要求 Node.js；无需安装 React、Next、Vinext、Drizzle 或数据库。验证方式：
 
 ```bash
-cd sites-app
-npm ci
-npm test
+npm run test:sites
 ```
+
+如执行 `npm ci`，只会依据最小 lockfile 建立空的依赖目录，不会下载应用框架。
 
 ## 方法文档
 
 - [CopyCaller 计算原理与实现边界](docs/CopyCaller_计算原理与实现边界.md)
 - [当前 32 孔模板回放与防错报告](docs/当前模板回放与防错报告.md)
+- [当前架构与演进原则](docs/ARCHITECTURE.md)

@@ -5,6 +5,64 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  var ISSUE_TITLES = Object.freeze({
+    EXPIRED_DYE_CALIBRATION: "通道校准过期",
+    EXPIRED_INSTRUMENT_CALIBRATION: "仪器校准过期",
+    CT_THRESHOLD_INCONSISTENT: "同一 assay 的 Ct 阈值不一致",
+    AUTO_BASELINE_OFF: "自动基线未启用",
+    NO_NTC: "未识别到 NTC",
+    NTC_RECOGNIZED: "NTC 已识别",
+    MANUAL_NTC_ASSIGNMENT: "人工 NTC 已应用",
+    NTC_ASSIGNMENT_UNCONFIRMED: "人工 NTC 尚未确认",
+    NTC_ASSIGNMENT_NOTE_MISSING: "人工 NTC 缺少依据",
+    NTC_SELECTOR_NOT_FOUND: "NTC 选择不存在",
+    NTC_PANEL_MISSING: "部分反应组合缺少 NTC",
+    PARTIAL_SAMPLE_AS_NTC: "同名样本部分孔设为 NTC",
+    NTC_WELL_SAMPLE_CONFLICT: "NTC 孔位样本冲突",
+    NTC_CALIBRATOR_CONFLICT: "NTC 与校准品冲突",
+    NO_ANALYTICAL_SAMPLES: "没有分析样本",
+    WELL_OUTSIDE_PLATE: "孔位越界",
+    WELL_NUMBER_MISMATCH: "孔号与坐标不一致",
+    NO_REFERENCE_ASSAY: "内参缺失",
+    WELL_SAMPLE_CONFLICT: "物理孔样本冲突",
+    DUPLICATE_WELL_TARGET: "同孔 target 重复",
+    REPORTER_MAPPING_CONFLICT: "Target-reporter 映射冲突",
+    NTC_AMPLIFICATION: "NTC 出现扩增",
+    SOURCE_FLAGS_PRESENT: "存在仪器原始 flags",
+    TARGET_IN_MULTIPLE_PANELS: "检测到多反应组合"
+  });
+
+  var QUALITY_LABELS = Object.freeze({
+    PASS: "通过",
+    CAUTION_Z: "Z-score 谨慎",
+    FAIL_Z: "Z-score 失败",
+    LOW_CONFIDENCE: "低置信度",
+    ZERO_COPY_CONFIRMED: "0 copy",
+    ZERO_COPY_CANDIDATE: "0-copy 候选",
+    NO_CALL_MIXED: "部分扩增 · No call",
+    INVALID_REFERENCE: "内参无效",
+    METRICS_UNAVAILABLE: "Confidence/Z-score 暂不可计算（同 CN 样本少于 7 个；不影响 CN 判定）",
+    REVIEW_REPLICATE_SD: "复孔 SD 需复核",
+    NOT_ANALYZED: "未校准",
+    NO_CALL: "No call",
+    METRICS_PENDING: "待指标计算"
+  });
+
+  var QUALITY_CLASSES = Object.freeze({
+    PASS: "pass",
+    ZERO_COPY_CONFIRMED: "zero",
+    ZERO_COPY_CANDIDATE: "zero",
+    CAUTION_Z: "caution",
+    LOW_CONFIDENCE: "caution",
+    REVIEW_REPLICATE_SD: "caution",
+    METRICS_UNAVAILABLE: "caution",
+    METRICS_PENDING: "caution",
+    FAIL_Z: "fail",
+    NO_CALL_MIXED: "fail",
+    INVALID_REFERENCE: "fail",
+    NO_CALL: "fail"
+  });
+
   function create(code, severity, params) {
     if (!code) throw new Error("Diagnostic code is required.");
     return Object.freeze({
@@ -79,5 +137,25 @@
     return (diagnostics || []).map(format).join(separator === undefined ? "; " : separator);
   }
 
-  return { create: create, format: format, formatMany: formatMany };
+  function title(value) {
+    var code = typeof value === "string" ? value : value && value.code;
+    return ISSUE_TITLES[code] || code || "";
+  }
+
+  function qualityLabel(status) {
+    return QUALITY_LABELS[status] || status || "";
+  }
+
+  function qualityClass(status) {
+    return QUALITY_CLASSES[status] || "neutral";
+  }
+
+  return {
+    create: create,
+    format: format,
+    formatMany: formatMany,
+    title: title,
+    qualityLabel: qualityLabel,
+    qualityClass: qualityClass
+  };
 });

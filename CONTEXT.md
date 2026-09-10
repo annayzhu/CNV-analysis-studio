@@ -28,3 +28,24 @@ parameters rather than sentences.
 The **release asset manifest** is the single list of canonical browser and offline
 files. Sites synchronization and offline packaging consume this manifest; generated
 copies under `sites-app/public` are never edited independently.
+
+## CNV analysis result
+
+A **CNV analysis result** contains one canonical copy of normalized measurement
+records plus calculated assay, sample, well, calibration, and diagnostic projections.
+Calculated wells keep only audit scalars such as source row and source flags; they do
+not embed duplicate source or reference records.
+
+## Registration review
+
+A **registration review** is the single decision Module for registration completeness
+and manual approval eligibility. The browser and workbook export are adapters over
+the same `reviewRegistration` interface; scientific `HOLD` remains distinct from
+missing registration fields and human review status.
+
+## Sites static delivery
+
+**Sites static delivery** is an adapter for the same browser application used by the
+offline package. Its interface is one Worker `fetch`: `/` maps to `index.html` and all
+other requests pass to the platform asset adapter. It has no database, authentication,
+React, server-rendering, or image-processing responsibility.

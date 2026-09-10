@@ -375,36 +375,6 @@
     card.classList.toggle("is-ready", a.releaseStatus !== "HOLD");
   }
 
-  function issueTitle(issue) {
-    var titles = {
-      EXPIRED_DYE_CALIBRATION: "通道校准过期",
-      EXPIRED_INSTRUMENT_CALIBRATION: "仪器校准过期",
-      CT_THRESHOLD_INCONSISTENT: "同一 assay 的 Ct 阈值不一致",
-      AUTO_BASELINE_OFF: "自动基线未启用",
-      NO_NTC: "未识别到 NTC",
-      NTC_RECOGNIZED: "NTC 已识别",
-      MANUAL_NTC_ASSIGNMENT: "人工 NTC 已应用",
-      NTC_ASSIGNMENT_UNCONFIRMED: "人工 NTC 尚未确认",
-      NTC_ASSIGNMENT_NOTE_MISSING: "人工 NTC 缺少依据",
-      NTC_SELECTOR_NOT_FOUND: "NTC 选择不存在",
-      NTC_PANEL_MISSING: "部分反应组合缺少 NTC",
-      PARTIAL_SAMPLE_AS_NTC: "同名样本部分孔设为 NTC",
-      NTC_WELL_SAMPLE_CONFLICT: "NTC 孔位样本冲突",
-      NTC_CALIBRATOR_CONFLICT: "NTC 与校准品冲突",
-      NO_ANALYTICAL_SAMPLES: "没有分析样本",
-      WELL_OUTSIDE_PLATE: "孔位越界",
-      WELL_NUMBER_MISMATCH: "孔号与坐标不一致",
-      NO_REFERENCE_ASSAY: "内参缺失",
-      WELL_SAMPLE_CONFLICT: "物理孔样本冲突",
-      DUPLICATE_WELL_TARGET: "同孔 target 重复",
-      REPORTER_MAPPING_CONFLICT: "Target-reporter 映射冲突",
-      NTC_AMPLIFICATION: "NTC 出现扩增",
-      SOURCE_FLAGS_PRESENT: "存在仪器原始 flags",
-      TARGET_IN_MULTIPLE_PANELS: "检测到多反应组合"
-    };
-    return titles[issue.code] || issue.code;
-  }
-
   function renderQc() {
     var a = state.analysis;
     var referenceWarnings = [];
@@ -433,7 +403,7 @@
       var icon = severity === "blocker" ? "!" : (severity === "warning" ? "!" : "i");
       return '<div class="qc-item qc-item--' + severity + '">' +
         '<span class="qc-item__icon">' + icon + "</span>" +
-        "<div><strong>" + escapeHtml(issueTitle(issue)) + "</strong><p>" + escapeHtml(diagnostics.format(issue)) + "</p></div>" +
+        "<div><strong>" + escapeHtml(diagnostics.title(issue)) + "</strong><p>" + escapeHtml(diagnostics.format(issue)) + "</p></div>" +
         '<span class="qc-item__code">' + escapeHtml(issue.code) + "</span></div>";
     }).join("");
   }
@@ -662,41 +632,16 @@
 
   function registrationMissingItems() {
     if (!state.registration) return [];
-    var r = state.registration;
-    var missing = [];
-    [
-      ["protocolVersion", "Protocol/SOP 版本"],
-      ["plateId", "Plate ID"],
-      ["experimentDate", "实验日期"],
-      ["operator", "操作人"],
-      ["reactionVolume", "反应体积"],
-      ["masterMixBrand", "Master Mix 品牌"],
-      ["masterMixCatalog", "Master Mix Cat."],
-      ["masterMixLot", "Master Mix 批号"],
-      ["masterMixExpiry", "Master Mix 有效期"],
-      ["reviewer", "复核人"],
-      ["reviewDate", "复核日期"]
-    ].forEach(function (item) { if (!String(r[item[0]] || "").trim()) missing.push(item[1]); });
-    (r.assays || []).forEach(function (assay) {
-      [["brand", "品牌"], ["assayId", "Assay ID"], ["lot", "批号"], ["concentration", "浓度"]].forEach(function (item) {
-        if (!String(assay[item[0]] || "").trim()) missing.push(assay.target + " " + item[1]);
-      });
-    });
-    (state.analysis ? state.analysis.assays : []).forEach(function (assay) {
-      var calibration = assay.calibration.config || {};
-      if (["sample", "group", "population"].indexOf(calibration.mode) >= 0 && !String(calibration.confirmationEvidence || "").trim()) {
-        missing.push("校准依据：" + assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : ""));
-      }
-    });
-    return missing;
+    return core.reviewRegistration(state.analysis, state.registration, false).missingItems;
   }
 
   function updateFinalDecisionOptions() {
     var select = $("#record-final-decision");
     if (!select || !state.registration || !state.analysis) return;
     var missing = registrationMissingItems();
+    var review = core.reviewRegistration(state.analysis, state.registration, false);
     var automaticHold = state.analysis.releaseStatus === "HOLD";
-    var canRelease = !automaticHold && !missing.length;
+    var canRelease = review.canApprove;
     if (state.registration.finalDecision === "同意放行" && (!canRelease || state.registration.approvalInvalidated)) state.registration.finalDecision = "待复核";
     var releaseLabel = canRelease ? "同意放行" : (automaticHold ? "同意放行（自动质控 HOLD）" : "同意放行（补全登记与复核后可选）");
     var options = [
@@ -817,28 +762,8 @@
     updateRegistrationSaveStatus();
   }
 
-  var QUALITY_LABELS = {
-    PASS: "通过",
-    CAUTION_Z: "Z-score 谨慎",
-    FAIL_Z: "Z-score 失败",
-    LOW_CONFIDENCE: "低置信度",
-    ZERO_COPY_CONFIRMED: "0 copy",
-    ZERO_COPY_CANDIDATE: "0-copy 候选",
-    NO_CALL_MIXED: "部分扩增 · No call",
-    INVALID_REFERENCE: "内参无效",
-    METRICS_UNAVAILABLE: "Confidence/Z-score 暂不可计算（同 CN 样本少于 7 个；不影响 CN 判定）",
-    REVIEW_REPLICATE_SD: "复孔 SD 需复核",
-    NOT_ANALYZED: "未校准",
-    NO_CALL: "No call",
-    METRICS_PENDING: "待指标计算"
-  };
-
   function statusClass(status) {
-    if (status === "PASS") return "pass";
-    if (["ZERO_COPY_CONFIRMED", "ZERO_COPY_CANDIDATE"].indexOf(status) >= 0) return "zero";
-    if (["CAUTION_Z", "LOW_CONFIDENCE", "REVIEW_REPLICATE_SD", "METRICS_UNAVAILABLE", "METRICS_PENDING"].indexOf(status) >= 0) return "caution";
-    if (["FAIL_Z", "NO_CALL_MIXED", "INVALID_REFERENCE", "NO_CALL"].indexOf(status) >= 0) return "fail";
-    return "neutral";
+    return diagnostics.qualityClass(status);
   }
 
   function currentAssayFilter() {
@@ -880,7 +805,7 @@
         '<td class="is-number"><strong>' + (row.copy_number_predicted === null || row.copy_number_predicted === undefined ? "—" : row.copy_number_predicted) + "</strong></td>" +
         '<td class="is-number">' + (row.min_copy_number === null ? "—" : formatNumber(row.min_copy_number, 2) + "–" + formatNumber(row.max_copy_number, 2)) + "</td>" +
         numberCell(row.confidence_like, 3) + numberCell(row.absolute_z_score, 2) +
-        '<td><span class="status-chip status-chip--' + statusClass(row.quality_status) + '">' + escapeHtml(QUALITY_LABELS[row.quality_status] || row.quality_status) + "</span></td>" +
+        '<td><span class="status-chip status-chip--' + statusClass(row.quality_status) + '">' + escapeHtml(diagnostics.qualityLabel(row.quality_status)) + "</span></td>" +
         '<td class="flag-list">' + escapeHtml(row.flags || "—") + "</td></tr>";
     }).join("");
     if (!rows.length) html += '<tr><td colspan="17">没有匹配的结果。</td></tr>';

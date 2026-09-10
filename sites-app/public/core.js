@@ -723,20 +723,20 @@
   }
 
   function buildAssays(records, referenceName, settings) {
-    var byWell = {};
+    var referenceByWell = {};
+    var referenceKey = normalizeKey(referenceName);
     records.forEach(function (record) {
       var wellKey = record.wellPosition || String(record.wellNumber);
-      if (!byWell[wellKey]) byWell[wellKey] = [];
-      byWell[wellKey].push(record);
+      if (normalizeKey(record.targetName) === referenceKey && !referenceByWell[wellKey]) referenceByWell[wellKey] = record;
     });
     var assayMap = {};
     records.forEach(function (record) {
-      if (normalizeKey(record.targetName) === normalizeKey(referenceName)) return;
+      if (normalizeKey(record.targetName) === referenceKey) return;
       var assayKey = makeAssayKey(record, settings.splitPanels);
       if (!assayMap[assayKey]) assayMap[assayKey] = { key: assayKey, targetName: record.targetName, panelSignature: settings.splitPanels ? record.panelSignature : "", reporters: {}, wells: [] };
       assayMap[assayKey].reporters[record.reporter] = true;
       var wellKey = record.wellPosition || String(record.wellNumber);
-      var ref = (byWell[wellKey] || []).filter(function (candidate) { return normalizeKey(candidate.targetName) === normalizeKey(referenceName); })[0] || null;
+      var ref = referenceByWell[wellKey] || null;
       var qcCodes = [];
       var analysisState = "VALID";
       var deltaCt = null;
@@ -773,8 +773,8 @@
         analysisState: analysisState,
         qcCodes: qcCodes,
         omitReason: record.omit ? "源文件 Omit=true" : "",
-        sourceRecord: record,
-        referenceRecord: ref
+        sourceRow: record.sourceRow,
+        sourceFlags: Object.keys(record.flags || {}).filter(function (key) { return record.flags[key]; })
       });
     });
     return Object.keys(assayMap).sort().map(function (key) {
@@ -1119,29 +1119,13 @@
           analysis_state: w.analysisState,
           qc_codes: w.qcCodes.join(";"),
           omitted_reason: w.omitReason,
-          source_row: w.sourceRecord.sourceRow,
-          source_flags: Object.keys(w.sourceRecord.flags || {}).filter(function (key) { return w.sourceRecord.flags[key]; }).join(";")
+          source_row: w.sourceRow,
+          source_flags: w.sourceFlags.join(";")
         });
       });
     });
     return rows;
   }
-
-  var EXPORT_QUALITY_LABELS = {
-    PASS: "通过",
-    CAUTION_Z: "Z-score 谨慎",
-    FAIL_Z: "Z-score 失败",
-    LOW_CONFIDENCE: "低置信度",
-    ZERO_COPY_CONFIRMED: "0 copy",
-    ZERO_COPY_CANDIDATE: "0-copy 候选",
-    NO_CALL_MIXED: "部分扩增 · No call",
-    INVALID_REFERENCE: "内参无效",
-    METRICS_UNAVAILABLE: "Confidence/Z-score 暂不可计算（同 CN 样本少于 7 个；不影响 CN 判定）",
-    REVIEW_REPLICATE_SD: "复孔 SD 需复核",
-    NOT_ANALYZED: "未校准",
-    NO_CALL: "No call",
-    METRICS_PENDING: "待指标计算"
-  };
 
   function exportValue(value, fallback) {
     if (value === null || value === undefined || String(value).trim() === "") return fallback === undefined ? "" : fallback;
@@ -1172,7 +1156,7 @@
         "反应组合": row.panel,
         "CN 判定": zeroCandidate ? "0-copy 候选" : (row.copy_number_predicted === null ? "No call" : row.copy_number_predicted),
         "连续 CN": zeroCandidate ? null : row.copy_number_calculated,
-        "结果状态": EXPORT_QUALITY_LABELS[row.quality_status] || row.quality_status,
+        "结果状态": diagnostics.qualityLabel(row.quality_status),
         "0-copy 依据": row.zero_copy_basis,
         "批次状态": analysis.releaseStatus === "HOLD" ? "HOLD · 不可放行" : "READY_FOR_REVIEW · 待人工复核",
         "有效复孔": row.valid_replicates + "/" + row.total_replicates,
@@ -1281,7 +1265,7 @@
           "SD(ΔCt)": round(result.deltaCtSd, 4),
           "SD(ΔCt)预警阈值": analysis.settings.replicateSdWarn,
           "有效复孔": (result.classification === "ZERO" ? result.zeroEvidenceCount : result.validCount) + "/" + result.totalWells,
-          "自动结论": EXPORT_QUALITY_LABELS[result.qualityStatus] || result.qualityStatus,
+          "自动结论": diagnostics.qualityLabel(result.qualityStatus),
           "0-copy 依据": result.classification === "ZERO" ? result.zeroCopyBasis + (result.zeroCallConfirmed ? "；同 assay / panel 存在有效阳性校准且复孔数达标" : "；尚未满足有效阳性校准与最低复孔数的全部条件") : "",
           "Flags": result.flags.join(";"),
           "Run ID": audit.runId,
@@ -1443,7 +1427,9 @@
     return rows;
   }
 
-  function approvalBlockers(analysis, registration, requireReviewedStatus) {
+  function reviewRegistration(analysis, registrationInput, requireReviewedStatus) {
+    var registration = registrationInput || {};
+    var missingItems = [];
     var blockers = [];
     if (analysis.releaseStatus === "HOLD") blockers.push("自动质控为 HOLD");
     if (registration.approvalInvalidated === true) blockers.push("分析或登记变更后尚未重新复核");
@@ -1454,21 +1440,27 @@
       ["masterMixLot", "Master Mix 批号"], ["masterMixExpiry", "Master Mix 有效期"],
       ["reviewer", "复核人"], ["reviewDate", "复核日期"]
     ].forEach(function (item) {
-      if (!String(registration[item[0]] || "").trim()) blockers.push(item[1] + "未填写");
+      if (!String(registration[item[0]] || "").trim()) missingItems.push(item[1]);
     });
     (registration.assays || []).forEach(function (assay) {
       [["brand", "品牌"], ["assayId", "Assay ID"], ["lot", "批号"], ["concentration", "浓度"]].forEach(function (item) {
-        if (!String(assay[item[0]] || "").trim()) blockers.push(assay.target + " " + item[1] + "未填写");
+        if (!String(assay[item[0]] || "").trim()) missingItems.push(assay.target + " " + item[1]);
       });
     });
     (analysis.assays || []).forEach(function (assay) {
       var config = assay.calibration.config || {};
       if (["sample", "group", "population"].indexOf(config.mode) >= 0 && !String(config.confirmationEvidence || "").trim()) {
-        blockers.push(assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : "") + " 校准依据未填写");
+        missingItems.push("校准依据：" + assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : ""));
       }
     });
+    missingItems = unique(missingItems);
+    blockers = blockers.concat(missingItems.map(function (item) { return item + "未填写"; }));
     if (requireReviewedStatus && registration.recordStatus !== "已复核") blockers.push("记录状态不是已复核");
-    return unique(blockers);
+    return {
+      missingItems: missingItems,
+      blockers: unique(blockers),
+      canApprove: analysis.releaseStatus !== "HOLD" && missingItems.length === 0
+    };
   }
 
   function registrationRows(analysis, context, audit) {
@@ -1496,10 +1488,10 @@
         "来源": "Target/Reporter来自仪器；其余为人工登记"
       };
     });
-    var releaseBlockers = approvalBlockers(analysis, registration, false);
+    var releaseBlockers = reviewRegistration(analysis, registration, false).blockers;
     var recordedDecision = exportValue(registration.finalDecision, "待复核");
     if (recordedDecision === "同意放行") {
-      var finalBlockers = approvalBlockers(analysis, registration, true);
+      var finalBlockers = reviewRegistration(analysis, registration, true).blockers;
       if (finalBlockers.length) recordedDecision = "待复核（放行条件未满足：" + finalBlockers.join("；") + "）";
     }
     var rows = [
@@ -1589,21 +1581,10 @@
     DEFAULTS: DEFAULTS,
     parseAoA: parseAoA,
     analyze: analyze,
-    inferPlateFormat: inferPlateFormat,
-    inferReferenceName: inferReferenceName,
     parseWellPosition: parseWellPosition,
     flattenResults: flattenResults,
     flattenWells: flattenWells,
     buildIntegratedExport: buildIntegratedExport,
-    helpers: {
-      normalizeKey: normalizeKey,
-      toNumber: toNumber,
-      toBoolean: toBoolean,
-      mean: mean,
-      median: median,
-      sampleSd: sampleSd,
-      round: round,
-      fitPopulationCalibration: fitPopulationCalibration
-    }
+    reviewRegistration: reviewRegistration
   };
 });

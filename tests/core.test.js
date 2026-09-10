@@ -121,6 +121,32 @@ test("consistent target non-detection with valid reference and calibration is re
   assert.match(detail["0-copy 依据"], /Target Ct 未检出/);
 });
 
+test("analysis wells keep compact audit scalars instead of duplicating source records", () => {
+  const scenario = runScenario({
+    samples: [{ name: "Sample", startWell: 1, targetCts: [25, 25], referenceCts: [24, 24] }],
+    settings: { splitPanels: false },
+  });
+  const well = scenario.assay().wells[0];
+
+  assert.equal(well.sourceRow, 1);
+  assert.deepEqual(well.sourceFlags, []);
+  assert.equal(Object.hasOwn(well, "sourceRecord"), false);
+  assert.equal(Object.hasOwn(well, "referenceRecord"), false);
+  assert.equal(core.flattenWells(scenario.analysis)[0].source_row, 1);
+});
+
+test("registration review is the single source for missing fields and approval", () => {
+  const scenario = runScenario({
+    samples: [{ name: "Sample", startWell: 1, targetCts: [25, 25], referenceCts: [24, 24] }],
+    settings: { splitPanels: false },
+  });
+  const review = core.reviewRegistration(scenario.analysis, { assays: [] }, false);
+
+  assert.ok(review.missingItems.includes("Plate ID"));
+  assert.ok(review.blockers.includes("Plate ID未填写"));
+  assert.equal(review.canApprove, false);
+});
+
 test("automatic Ct threshold is accepted and threshold values may differ from 0.2", () => {
   const samples = [{ name: "S1", startWell: 1, targetCts: [25, 25], referenceCts: [25, 25] }];
   const automatic = runScenario({

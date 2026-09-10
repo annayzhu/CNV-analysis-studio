@@ -23,3 +23,11 @@ test("unknown diagnostic codes remain auditable", () => {
   assert.equal(diagnostics.format(item), "FUTURE_DIAGNOSTIC");
   assert.equal(diagnostics.formatMany([item]), "FUTURE_DIAGNOSTIC");
 });
+
+test("diagnostic presentation metadata has one stable source", () => {
+  assert.equal(diagnostics.title("NO_NTC"), "未识别到 NTC");
+  assert.equal(diagnostics.qualityLabel("ZERO_COPY_CONFIRMED"), "0 copy");
+  assert.equal(diagnostics.qualityClass("ZERO_COPY_CONFIRMED"), "zero");
+  assert.equal(diagnostics.qualityLabel("FUTURE_STATUS"), "FUTURE_STATUS");
+  assert.equal(diagnostics.qualityClass("FUTURE_STATUS"), "neutral");
+});
