@@ -45,13 +45,18 @@ missing registration fields and human review status.
 
 ## Plate layout supplementation
 
-**Plate layout supplementation** fills missing sample identities by an explicitly
+**Plate layout supplementation** updates sample identities by an explicitly
 selected plate and physical well. `CopyNumberLayout` accepts named two-dimensional
 sheets from file and clipboard adapters; it does not read files or mutate input
-records. Existing names and measurements remain unchanged. Registration metadata
+records. Missing identities fill directly; replacing existing names requires user
+confirmation in the browser. Original instrument names and measurements remain
+auditable across repeated corrections. Registration metadata
 is fill-only and applied only when the layout was selected before instrument import.
 Saved assignments and exported source names keep the correction traceable. Unnamed
-measurements remain auditable but do not form an anonymous CN result.
+measurements remain auditable but do not form an anonymous CN result. A nonblank
+sample name is not evidence that the plate identity has been verified. Replacement
+recounts samples and clears name-dependent calibration; NTC roles stay on their
+original physical wells.
 
 ## Sites static delivery
 

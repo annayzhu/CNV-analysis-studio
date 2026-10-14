@@ -82,6 +82,43 @@ test("Excel, pasted tables and a filled template preserve textual IDs and reject
   assert.throws(() => layout.parseSheets([{ name: "Samples", rows: [["Well", "Sample"], ["A25", "One"]] }]), /孔位无效/);
 });
 
+test("confirmed replacement corrects placeholder names, recounts samples and retains original measurements", () => {
+  const layout = require("../layout.js");
+  const records = core.parseAoA([
+    ["Well", "Sample", "Target", "CT", "NOAMP"],
+    ...["A1", "A2", "A3", "A4"].flatMap((well, i) => [
+      [well, "Sample 1", "TARGET", i < 2 ? 25 : 26, "N"],
+      [well, "Sample 1", "RNaseP", 25, "N"],
+    ]),
+  ]).records;
+  const plate = { id: "P01", samples: { A1: "Cal", A2: "Cal", A3: "00123", A4: "00123" } };
+  assert.equal(core.analyze(records).sampleCount, 1);
+  assert.deepEqual(layout.applySamples(records, plate, "layout.xlsx").records, records);
+  const corrected = layout.applySamples(records, plate, "layout.xlsx", true);
+  assert.deepEqual(corrected.overwrittenWells, ["A1", "A2", "A3", "A4"]);
+  assert.deepEqual(corrected.changedWells, ["A1", "A2", "A3", "A4"]);
+  assert.ok(corrected.records.every(r => r.originalSampleName === "Sample 1"));
+  assert.deepEqual(corrected.records.map(r => [r.ctRaw, r.flags, r.omit]), records.map(r => [r.ctRaw, r.flags, r.omit]));
+  const analysis = core.analyze(corrected.records, {}, { splitPanels: false, calibrations: { TARGET: { mode: "sample", sampleName: "Cal", copyNumber: 2, independentlyConfirmed: true } } });
+  assert.equal(analysis.sampleCount, 2);
+  assert.equal(core.flattenResults(analysis).find(r => r.sample === "00123").copy_number_calculated, 1);
+  const second = layout.applySamples(corrected.records, { id: "P01", samples: { A3: "Corrected ID" } }, "updated.xlsx", true);
+  assert.equal(second.records[4].sampleName, "Corrected ID");
+  assert.equal(second.records[4].originalSampleName, "Sample 1");
+  assert.equal(second.records[6].sampleName, "00123");
+  assert.ok(records.every(r => r.sampleName === "Sample 1"));
+});
+
+test("renaming an instrument-labelled NTC does not erase its original control role", () => {
+  const layout = require("../layout.js");
+  const records = core.parseAoA([["Well", "Sample", "Target", "CT"], ["A1", "NTC", "TARGET", "Undetermined"], ["A1", "NTC", "RNaseP", "Undetermined"]]).records;
+  const changed = layout.applySamples(records, { id: "P01", samples: { A1: "Blank 1" } }, "layout.xlsx", true);
+  const analysis = core.analyze(changed.records);
+  assert.equal(analysis.ntcSummary.physicalWellCount, 1);
+  assert.equal(analysis.sampleCount, 0);
+  assert.equal(analysis.records[0].originalSampleName, "NTC");
+});
+
 test("planner registration fills available blanks without guessing reagents or overwriting entries", () => {
   const layout = require("../layout.js");
   const document = layout.parseSheets([

@@ -146,7 +146,7 @@
     }
     state.sampleAssignments = saved.sampleAssignments || [];
     state.sampleAssignments.forEach(function (assignment) {
-      var restoredSamples = layout.applySamples(state.parsed.records, assignment.plate, assignment.source);
+      var restoredSamples = layout.applySamples(state.parsed.records, assignment.plate, assignment.source, assignment.overwriteExisting === true);
       state.parsed.records = restoredSamples.records;
     });
     state.registrationSavedAt = saved.savedAt || "";
@@ -367,7 +367,7 @@
       return '<option value="' + i + '">' + escapeHtml(plate.id) + " · " + Object.keys(plate.samples).length + " 孔</option>";
     }).join("");
     $("#layout-preview").hidden = false;
-    layoutMessage(source + " 已读取，请核对孔位与样本后应用。");
+    layoutMessage("");
     renderLayoutPreview();
   }
 
@@ -389,26 +389,45 @@
     $("#layout-preview-count").textContent = "";
     if (!selected) return;
     var rows = Object.entries(selected.plate.samples);
-    var preview = state.parsed ? layout.applySamples(state.parsed.records, selected.plate, selected.source) : null;
-    $("#layout-preview-count").textContent = preview ? "可补全 " + preview.filledWells.length + " 孔；已有样本名冲突 " + preview.conflicts.length + " 孔（保留原值）；结果中未出现 " + preview.unmatchedWells.length + " 孔（不导入）。" : rows.length + " 个有样本名的孔；导入仪器结果后匹配。";
-    $("#layout-preview-table").innerHTML = "<table><thead><tr><th>Well</th><th>Sample</th></tr></thead><tbody>" + rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td><td>" + escapeHtml(row[1]) + "</td></tr>"; }).join("") + "</tbody></table>";
+    var preview = state.parsed ? layout.applySamples(state.parsed.records, selected.plate, selected.source, true) : null;
+    $("#layout-preview-count").textContent = preview ? "补入 " + preview.filledWells.length + " 孔 · 覆盖 " + preview.overwrittenWells.length + " 孔" + (preview.unmatchedWells.length ? " · 未匹配 " + preview.unmatchedWells.length + " 孔" : "") : rows.length + " 孔 · " + unique(rows.map(function (row) { return row[1]; })).length + " 个样本名";
+    var currentNames = new Map();
+    if (state.parsed) state.parsed.records.forEach(function (record) {
+      if (!currentNames.has(record.wellPosition)) currentNames.set(record.wellPosition, new Set());
+      if (record.sampleName) currentNames.get(record.wellPosition).add(record.sampleName);
+    });
+    $("#layout-preview-table").innerHTML = "<table><thead><tr><th>孔位</th>" + (preview ? "<th>当前样本名</th>" : "") + "<th>导入样本名</th></tr></thead><tbody>" + rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td>" + (preview ? "<td>" + escapeHtml(Array.from(currentNames.get(row[0]) || []).join(" / ") || "—") + "</td>" : "") + "<td>" + escapeHtml(row[1]) + "</td></tr>"; }).join("") + "</tbody></table>";
   }
 
   function applyLayout(selected, includeRegistration) {
-    var applied = layout.applySamples(state.parsed.records, selected.plate, selected.source);
+    var applied = layout.applySamples(state.parsed.records, selected.plate, selected.source, true);
+    if (applied.overwrittenWells.length && !window.confirm("将覆盖 " + applied.overwrittenWells.length + " 个孔的现有样本名（含仪器导入名称），并重新统计样本数。原始名称保留在导出记录中。\n覆盖后需重新选择校准样本。\n\n确认覆盖？")) return false;
+    if (applied.overwrittenWells.length) {
+      state.settings.calibrations = {};
+      var ntc = state.settings.ntcAssignment;
+      if (ntc && ["manual_sample", "manual_both"].includes(ntc.mode)) {
+        // A name correction must not move a previously designated control to another well.
+        var ntcWells = state.parsed.records.filter(function (record) { return ntc.sampleNames.includes(record.sampleName); }).map(function (record) { return record.wellPosition; });
+        state.settings.ntcAssignment = Object.assign({}, ntc, { mode: "manual_wells", sampleNames: [], wellPositions: unique((ntc.wellPositions || []).concat(ntcWells)) });
+      }
+    }
     state.parsed.records = applied.records;
-    if (applied.filledWells.length) {
+    if (applied.changedWells.length) {
       // Persist only the applied mapping, not every unrelated plate in the workbook.
       state.sampleAssignments.push({
-        plate: { id: selected.plate.id, samples: Object.fromEntries(applied.filledWells.map(function (well) { return [well, selected.plate.samples[well]]; })) },
-        source: selected.source
+        plate: { id: selected.plate.id, samples: Object.fromEntries(applied.changedWells.map(function (well) { return [well, selected.plate.samples[well]]; })) },
+        source: selected.source,
+        overwriteExisting: true
       });
     }
     if (includeRegistration) state.registration = layout.fillRegistration(state.registration, selected.registration, selected.source + " / " + selected.plate.id);
-    if (applied.filledWells.length || (includeRegistration && state.registration.layoutImport)) {
+    if (applied.changedWells.length || (includeRegistration && state.registration.layoutImport)) {
       markRegistrationDirty({ invalidateApproval: true });
     }
-    layoutMessage("已补全 " + applied.filledWells.length + " 个孔。" + (applied.conflicts.length ? "以下孔保留原样本名：" + applied.conflicts.join("、") + "。" : "") + (includeRegistration ? "布局中可匹配的实验与试剂信息已补入空白字段。" : "仅补充样本与孔位，实验登记保持原值。"));
+    layoutMessage("");
+    $("#layout-preview").hidden = true;
+    $("#layout-panel").open = false;
+    return true;
   }
 
   function applyLayoutFromUi() {
@@ -420,21 +439,20 @@
       return;
     }
     syncRegistrationFromUi();
-    applyLayout(selected, false);
-    runAnalysis();
-    renderLayoutPreview();
+    if (applyLayout(selected, false)) runAnalysis();
   }
 
   function renderSampleInfo() {
     var records = state.analysis.records;
     var missing = unique(records.filter(function (r) { return !r.sampleName && r.sampleRole !== "NTC"; }).map(function (r) { return r.wellPosition; }));
     var filled = unique(records.filter(function (r) { return r.sampleNameSource; }).map(function (r) { return r.wellPosition; }));
-    $("#sample-status").textContent = missing.length ? missing.length + " 个孔缺少样本名（" + missing.slice(0, 12).join("、") + (missing.length > 12 ? "…" : "") + "）。补全后自动重新计算。" : "样本信息完整" + (filled.length ? " · 已从板布局补录 " + filled.length + " 孔" : "");
+    $("#sample-status").textContent = (filled.length ? "已更新 " : "当前识别到 ") + state.analysis.sampleCount + " 个样本" + (missing.length ? " · " + missing.length + " 个孔缺少样本名" : " · " + state.analysis.wellsUsed + " 孔");
     $("#sample-section").appendChild($("#layout-panel"));
-    $("#layout-summary").textContent = "补充板布局信息";
-    $("#layout-help").textContent = "按所选板的孔位补全缺失样本名。已有样本名、Ct、试剂和实验登记保持原值。";
+    $("#layout-summary").textContent = "更新样本信息";
+    $("#layout-help").textContent = "按孔位导入样本名；覆盖已有名称时会请你确认。";
     $("#layout-template-format-label").hidden = true;
-    $("#layout-apply").textContent = "补全样本并重新分析";
+    $("#layout-apply").textContent = "更新样本并重新分析";
+    if (state.layoutDraft && !$("#layout-preview").hidden) renderLayoutPreview();
   }
 
   function downloadLayoutTemplate() {
@@ -508,11 +526,12 @@
       banner.innerHTML = "";
     }
     var list = $("#qc-list");
-    if (!a.runIssues.length) {
+    var visibleIssues = a.runIssues.filter(function (issue) { return issue.code !== "NO_NTC"; });
+    if (!visibleIssues.length) {
       list.innerHTML = '<div class="qc-empty">未检测到板级结构或元数据问题。</div>';
       return;
     }
-    list.innerHTML = a.runIssues.map(function (issue) {
+    list.innerHTML = visibleIssues.map(function (issue) {
       var severity = issue.severity || "info";
       var icon = severity === "blocker" ? "!" : (severity === "warning" ? "!" : "i");
       return '<div class="qc-item qc-item--' + severity + '">' +
@@ -1231,7 +1250,7 @@
     });
     $("#layout-panel").addEventListener("toggle", function () {
       $("#supplement-layout").setAttribute("aria-expanded", String(this.open));
-      $("#supplement-layout").textContent = this.open ? "收起板布局补录" : "补充板布局信息";
+      $("#supplement-layout").textContent = this.open ? "收起样本编辑" : "更新样本信息";
     });
     var input = $("#file-input");
     input.addEventListener("change", function () { handleFile(input.files[0]); input.value = ""; });

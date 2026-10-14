@@ -29,7 +29,7 @@
     DUPLICATE_WELL_TARGET: "同孔 target 重复",
     REPORTER_MAPPING_CONFLICT: "Target-reporter 映射冲突",
     NTC_AMPLIFICATION: "NTC 出现扩增",
-    SOURCE_FLAGS_PRESENT: "存在仪器原始 flags",
+    SOURCE_FLAGS_PRESENT: "仪器质控标记",
     TARGET_IN_MULTIPLE_PANELS: "检测到多反应组合"
   });
 
@@ -104,7 +104,10 @@
       WELL_NUMBER_MISMATCH: function () { return p.well + " 应对应 Well=" + p.expectedWellNumber + "，但文件记录为 " + p.actualWellNumber + "。"; },
       REPORTER_MAPPING_CONFLICT: function () { return p.target + " 在同一文件中对应多个 reporter：" + (p.reporters || []).join("/") + "。"; },
       NTC_AMPLIFICATION: function () { return "NTC 的 target 或内参通道出现数值 Ct：" + (p.details || []).join("；") + (p.additionalCount ? "；另有 " + p.additionalCount + " 条" : "") + "。需排查污染、非特异扩增或 NTC 误标。"; },
-      SOURCE_FLAGS_PRESENT: function () { return "仪器原始 flags：" + Object.keys(p.counts || {}).map(function (flag) { return flag + "=" + p.counts[flag]; }).join("；") + "。本工具保留全部 flags，不会仅凭单一 flag 静默删孔。"; },
+      SOURCE_FLAGS_PRESENT: function () {
+        var labels = { THOLDFAIL: "阈值识别失败", CQCONF: "Cq 置信度低", NOAMP: "未检出扩增", EXPFAIL: "指数期识别失败" };
+        return Object.keys(p.counts || {}).map(function (flag) { return (labels[flag] || flag) + "（" + flag + "）" + p.counts[flag]; }).join("；") + "。按孔×靶标记录计数，同一条记录可有多个标记。";
+      },
       NO_REFERENCE_ASSAY: function () { return "无法确定内参 assay。"; },
       TARGET_IN_MULTIPLE_PANELS: function () { return p.target + " 出现在 " + p.panelCount + " 种反应组合中：" + (p.panels || []).join("；") + (p.splitPanels ? "。已按反应组合分开分析。" : "。当前已合并，需确认桥接验证。"); },
       RECORDED_REFERENCE_NOT_IN_ASSAY: function () { return "导出文件记录的 Reference Sample“" + p.referenceSample + "”不在该 assay 中。请改选本板通过资格检查且已独立确认 CN 的备用校准品或校准组。"; },

@@ -324,7 +324,7 @@
 
   function automaticNtcSources(record) {
     var sources = [];
-    if (/(^|[\s_-])ntc($|[\s_-])|no[\s_-]*template/i.test(normalizeText(record.sampleName))) sources.push("AUTO_SAMPLE_NAME");
+    if ([record.sampleName, record.originalSampleName].some(function (name) { return /(^|[\s_-])ntc($|[\s_-])|no[\s_-]*template/i.test(normalizeText(name)); })) sources.push("AUTO_SAMPLE_NAME");
     if (/(^|[\s_-])ntc($|[\s_-])|no[\s_-]*template/i.test(normalizeText(record.task))) sources.push("AUTO_TASK");
     return sources;
   }

@@ -28,6 +28,14 @@ const planner = workbook({
   "Reaction Setup": [["TaqMan mix", 5, 22, "master-mix"]],
 });
 const upload = (page, selector, buffer, name) => page.locator(selector).setInputFiles({ name, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer });
+async function confirmReplacement(page, accept) {
+  const prompt = page.waitForEvent("dialog");
+  const click = page.locator("#layout-apply").click();
+  const dialog = await prompt;
+  assert.match(dialog.message(), /覆盖.*现有样本名/);
+  await (accept ? dialog.accept() : dialog.dismiss());
+  await click;
+}
 const browser = await chromium.launch({ headless: true });
 const errors = [];
 try {
@@ -44,10 +52,12 @@ try {
     await page.locator("#layout-paste").fill("Well\tSample\nA1\tCal\nB1\tCal\nA2\t00123\nB2\t00123");
     await page.locator("#layout-read-paste").click();
     await page.locator("#layout-apply").click();
-    assert.match(await page.locator("#sample-status").innerText(), /样本信息完整/);
+    assert.match(await page.locator("#sample-status").innerText(), /已更新 2 个样本/);
+    assert.equal(await page.locator("#layout-message").innerText(), "");
     assert.equal(await page.locator("#record-volume").inputValue(), "");
     assert.equal(await page.locator("#stat-samples").innerText(), "2");
     await page.locator("#record-volume").fill("12 µL");
+    await page.locator("#supplement-layout").click();
     await upload(page, "#layout-file", planner, "planner.xlsx");
     await page.waitForFunction(() => document.querySelector("#layout-plate").options.length === 3);
     assert.equal(await page.locator("#layout-apply").isDisabled(), true);
@@ -79,7 +89,7 @@ try {
     await page.locator("#save-registration").click();
     await page.reload();
     await upload(page, "#file-input", instrument, "unnamed.xlsx");
-    await page.waitForFunction(() => document.querySelector("#sample-status").textContent.includes("样本信息完整"));
+    await page.waitForFunction(() => document.querySelector("#sample-status").textContent.includes("已更新 2 个样本"));
     assert.equal(await page.locator("#record-volume").inputValue(), "12 µL");
     await page.locator("#supplement-layout").click();
     const downloadPromise = page.waitForEvent("download");
@@ -103,7 +113,7 @@ try {
   await page.locator("#layout-plate").selectOption("0");
   await page.locator("#layout-apply").click();
   await upload(page, "#file-input", instrument, "unnamed.xlsx");
-  await page.waitForFunction(() => document.querySelector("#sample-status").textContent.includes("样本信息完整"));
+  await page.waitForFunction(() => document.querySelector("#sample-status").textContent.includes("已更新 2 个样本"));
   assert.equal(await page.locator("#record-volume").inputValue(), "10 µL");
   assert.equal(await page.locator("#record-mix-name").inputValue(), "TaqMan mix");
   assert.equal(await page.locator(".record-assay-id").first().inputValue(), "Assay-001");
@@ -116,6 +126,68 @@ try {
   assert.equal(raw[0]["样本名来源"], "planner.xlsx / P01");
   assert.equal(raw[0].Ct, 25);
   await context.close();
+  const fullWells = Array.from({ length: 384 }, (_, i) => String.fromCharCode(65 + Math.floor(i / 24)) + (i % 24 + 1));
+  const placeholderInstrument = workbook({ Results: [["Well", "Sample", "Target", "CT", "THOLDFAIL"], ...fullWells.flatMap((well, i) => [
+    [well, "Sample 1", "GSTM1", i < 24 ? 25 : 26, "Y"], [well, "Sample 1", "RNaseP", 25, "Y"],
+  ])] });
+  const correctedPlate = workbook({ "Paste_QS_P01": [["Well", "Sample"], ...fullWells.map((well, i) => [well, "Sample_" + String(Math.floor(i / 24) + 1).padStart(3, "0")])] });
+  for (const width of [760, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, acceptDownloads: true });
+    const page = await context.newPage();
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(pathToFileURL(path.join(root, "cnvtool.html")).href);
+    await upload(page, "#file-input", placeholderInstrument, "placeholder-384.xlsx");
+    await page.waitForFunction(() => document.querySelector("#stat-wells").textContent === "384");
+    assert.equal(await page.locator("#stat-samples").innerText(), "1");
+    assert.doesNotMatch(await page.locator("#sample-status").innerText(), /信息完整/);
+    assert.equal(await page.locator("#qc-list").innerText().then(text => text.includes("NO_NTC")), false);
+    assert.match(await page.locator("#qc-list").innerText(), /阈值识别失败（THOLDFAIL）768/);
+    await page.locator("#supplement-layout").click();
+    await upload(page, "#layout-file", correctedPlate, "corrected-384.xlsx");
+    await page.waitForFunction(() => document.querySelector("#layout-preview-count").textContent.includes("覆盖 384 孔"));
+    assert.ok((await page.locator("#layout-preview-table").boundingBox()).height <= 137);
+    if (process.argv.includes("--screenshots")) {
+      await page.locator(".summary-strip").screenshot({ path: path.join(output, `summary-${width}.png`) });
+      await page.locator("#sample-section").screenshot({ path: path.join(output, `replace-preview-${width}.png`) });
+    }
+    await confirmReplacement(page, false);
+    assert.equal(await page.locator("#stat-samples").innerText(), "1");
+    await confirmReplacement(page, true);
+    assert.equal(await page.locator("#stat-samples").innerText(), "16");
+    assert.match(await page.locator("#sample-status").innerText(), /已更新 16 个样本/);
+    assert.equal(await page.locator("#layout-message").innerText(), "");
+    assert.equal(await page.locator("#layout-panel").getAttribute("open"), null);
+    await page.locator("#save-registration").click();
+    await page.reload();
+    await upload(page, "#file-input", placeholderInstrument, "placeholder-384.xlsx");
+    await page.waitForFunction(() => document.querySelector("#stat-samples").textContent === "16");
+    const download = page.waitForEvent("download");
+    await page.locator("#export-xlsx").click();
+    const book = XLSX.read(await readFile(await (await download).path()), { type: "buffer" });
+    const measurements = XLSX.utils.sheet_to_json(book.Sheets["原始Ct"]);
+    assert.equal(measurements.length, 768);
+    assert.ok(measurements.every(row => row["仪器样本名"] === "Sample 1"));
+    assert.equal(measurements[0]["Sample ID"], "Sample_001");
+    assert.equal(measurements[0].Ct, 25);
+    assert.equal(measurements[0]["样本名来源"], "corrected-384.xlsx / P01");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    if (process.argv.includes("--screenshots")) await page.locator("#sample-section").screenshot({ path: path.join(output, `updated-${width}.png`) });
+    if (width === 760) {
+      await page.locator("#setting-ntc-mode").selectOption("manual_sample");
+      await page.locator('.ntc-sample-choice[value="Sample_001"]').check();
+      await page.locator("#setting-ntc-note").fill("Synthetic control assignment for rename regression");
+      await page.locator("#setting-ntc-confirmed").check();
+      await page.locator("#apply-ntc").click();
+      assert.equal(await page.locator("#stat-samples").innerText(), "15");
+      await page.locator("#supplement-layout").click();
+      await page.locator("#layout-paste").fill("Well\tSample\nA1\tRenamed control");
+      await page.locator("#layout-read-paste").click();
+      await confirmReplacement(page, true);
+      assert.equal(await page.locator(".ntc-status").innerText(), "已识别 24 孔");
+      assert.equal(await page.locator("#stat-samples").innerText(), "15");
+    }
+    await context.close();
+  }
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: "passed", screenshots: process.argv.includes("--screenshots") ? output : null, cases: ["late paste", "late workbook only fills samples", "multi-plate selection", "CN=1", "approval and re-review", "registration restore", "template download", "early registration import", "XLSX audit roundtrip", "desktop/mobile", "print all panels"] }, null, 2));
+  console.log(JSON.stringify({ result: "passed", screenshots: process.argv.includes("--screenshots") ? output : null, cases: ["late paste", "late workbook only fills samples", "multi-plate selection", "CN=1", "approval and re-review", "registration restore", "template download", "early registration import", "XLSX audit roundtrip", "desktop/mobile", "print all panels", "384-well replacement confirmation/cancel", "sample count 1 to 16", "saved replacements restored", "original-name audit"] }, null, 2));
 } finally { await browser.close(); }

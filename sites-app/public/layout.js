@@ -99,7 +99,7 @@
     return { plates: Array.from(plates.values(), function (plate) { return { id: plate.id, samples: Object.fromEntries(plate.samples) }; }), registration: readRegistration(sheets) };
   }
 
-  function applySamples(records, plate, source) {
+  function applySamples(records, plate, source, overwriteExisting) {
     var present = new Set(records.map(function (r) { return r.wellPosition; }));
     var conflicts = new Set();
     records.forEach(function (record) {
@@ -107,17 +107,21 @@
       if (planned && record.sampleName && record.sampleName !== planned) conflicts.add(record.wellPosition);
     });
     var filled = new Set();
+    var overwritten = new Set();
+    var changed = new Set();
     var result = records.map(function (record) {
       var sample = plate.samples[record.wellPosition];
-      if (record.sampleName || !sample || conflicts.has(record.wellPosition)) return record;
-      filled.add(record.wellPosition);
+      if (!sample || record.sampleName === sample) return record;
+      if (!overwriteExisting && (record.sampleName || conflicts.has(record.wellPosition))) return record;
+      (record.sampleName ? overwritten : filled).add(record.wellPosition);
+      changed.add(record.wellPosition);
       return Object.assign({}, record, {
         sampleName: sample,
-        originalSampleName: "",
+        originalSampleName: record.originalSampleName === undefined ? record.sampleName : record.originalSampleName,
         sampleNameSource: source + " / " + plate.id
       });
     });
-    return { records: result, filledWells: Array.from(filled), conflicts: Array.from(conflicts), unmatchedWells: Object.keys(plate.samples).filter(function (well) { return !present.has(well); }) };
+    return { records: result, filledWells: Array.from(filled), overwrittenWells: Array.from(overwritten), changedWells: Array.from(changed), conflicts: Array.from(conflicts), unmatchedWells: Object.keys(plate.samples).filter(function (well) { return !present.has(well); }) };
   }
 
   function templateRows(wells) {
