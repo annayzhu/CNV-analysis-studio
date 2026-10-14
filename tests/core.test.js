@@ -194,6 +194,9 @@ test("an incomplete or unreviewed record cannot be exported as approved for rele
   workbook = scenario.workbook({ registration });
   decision = workbook.sheet("运行登记").rows.find((row) => row["字段"] === "人工复核结论")["本次记录"];
   assert.equal(decision, "同意放行");
+  assert.equal(scenario.analysis.ntcSummary.detected, false);
+  assert.equal(core.reviewRegistration(scenario.analysis, registration, true).canApprove, true);
+  assert.deepEqual(core.reviewRegistration(scenario.analysis, registration, true).blockers, []);
   registration.approvalInvalidated = true;
   workbook = scenario.workbook({ registration });
   decision = workbook.sheet("运行登记").rows.find((row) => row["字段"] === "人工复核结论")["本次记录"];

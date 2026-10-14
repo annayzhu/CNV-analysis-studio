@@ -585,7 +585,7 @@
     var wellGroups = ntcWellGroups();
     var sampleGroups = ntcSampleGroups(wellGroups);
     var statusClass = summary.detected ? "ok" : "missing";
-    var statusText = summary.detected ? "已识别 " + summary.physicalWellCount + " 孔" : "尚未设置";
+    var statusText = summary.detected ? "已识别 " + summary.physicalWellCount + " 孔" : "无 NTC（允许）";
     var sampleRows = sampleGroups.map(function (sample) {
       var checked = selectedSamples.indexOf(sample.sampleName) >= 0 ? " checked" : "";
       var disabled = sample.automatic || sample.conflict;
@@ -599,10 +599,10 @@
       return '<label class="ntc-candidate' + (disabled ? " is-disabled" : "") + '"><input class="ntc-well-choice" type="checkbox" value="' + escapeAttr(well.position) + '"' + checked + (disabled ? " disabled" : "") + '><span><strong>' + escapeHtml(well.position) + "</strong><small>" + escapeHtml(reason) + "</small></span></label>";
     }).join("");
     container.innerHTML =
-      '<div class="ntc-setup__head"><div><h3>NTC 设置（无模板对照）</h3><p>如果实验中确实设置了无模板孔，但仪器 plate setup 没有标记，可在这里补充；文件中已有的 NTC 标记始终保留。原始样本名和孔级数据不会被修改。</p></div><span class="ntc-status ntc-status--' + statusClass + '">' + escapeHtml(statusText) + "</span></div>" +
+      '<div class="ntc-setup__head"><div><h3>NTC 设置（可选）</h3><p>本次没有无模板对照（NTC）也可继续，无需补标或填写 NTC 依据。若实验中确有 NTC 但仪器漏标，可在这里补充；文件中已有的 NTC 标记始终保留。</p></div><span class="ntc-status ntc-status--' + statusClass + '">' + escapeHtml(statusText) + "</span></div>" +
       '<div class="ntc-boundary"><strong>实验边界：</strong>这里只能修正遗漏的板位标记；如果本次实验实际上没有设置 NTC，分析软件不能事后补造 NTC。</div>' +
       '<div class="ntc-config-grid"><label class="ntc-field"><span>NTC 识别方式</span><select id="setting-ntc-mode">' +
-      '<option value="auto"' + (mode === "auto" ? " selected" : "") + '>仅使用导入文件中的标记</option>' +
+      '<option value="auto"' + (mode === "auto" ? " selected" : "") + '>使用文件标记（允许无 NTC）</option>' +
       '<option value="manual_sample"' + (mode === "manual_sample" ? " selected" : "") + '>按样本名补标 NTC</option>' +
       '<option value="manual_wells"' + (mode === "manual_wells" ? " selected" : "") + '>按物理孔位补标 NTC</option></select><small>按样本名会覆盖该名称对应的全部孔；按孔位会覆盖该孔的全部 multiplex 行。</small></label>' +
       '<div><div id="ntc-sample-panel"' + (mode === "manual_sample" ? "" : " hidden") + '><span class="ntc-field"><span>选择实际未加模板的样本名</span></span><div class="ntc-candidates">' + (sampleRows || '<div class="qc-empty">没有可选样本。</div>') + "</div></div>" +
@@ -621,7 +621,7 @@
       $("#ntc-manual-fields").hidden = activeMode === "auto";
       if (activeMode === "auto") {
         $("#apply-ntc").textContent = mode !== "auto" ? "清除人工补标并重新分析" : "按导入文件重新分析";
-        $("#ntc-auto-panel").textContent = "自动模式不会新增 NTC，只使用导入文件中的明确标记。" + (mode !== "auto" ? "应用后将清除当前人工补标。" : "");
+        $("#ntc-auto-panel").textContent = "仅使用文件中的 NTC 标记；没有 NTC 时可直接继续分析。" + (mode !== "auto" ? "应用后将清除当前人工补标。" : "");
       } else {
         $("#apply-ntc").textContent = "确认补标 NTC 并重新分析";
       }
@@ -650,7 +650,9 @@
       updateNtcModeAndPreview();
     }
 
-    $("#setting-ntc-mode").addEventListener("change", function () { invalidateNtcConfirmation("NTC 指定方式已改变，请重新选择、填写依据并确认。", true); });
+    $("#setting-ntc-mode").addEventListener("change", function () {
+      invalidateNtcConfirmation(this.value === "auto" ? "允许无 NTC，无需填写依据；点击下方按钮应用。" : "NTC 指定方式已改变，请重新选择、填写依据并确认。", true);
+    });
     $all(".ntc-sample-choice, .ntc-well-choice").forEach(function (input) {
       input.addEventListener("change", function () { invalidateNtcConfirmation("NTC 选择已改变，请重新核对并确认。", false); });
     });
@@ -1082,7 +1084,7 @@
       '<div class="method-box"><h3>NTC 识别与审计</h3><ul>' +
       "<li>当前识别 " + ntc.physicalWellCount + " 个 NTC 物理孔；人工补标只修正 plate setup 遗漏，不能补造实验中不存在的 NTC。</li>" +
       "<li>NTC 保留原样本名和孔级数据，但从样本数、CN 结果、群体模型和校准候选中排除。</li>" +
-      "<li>未识别 NTC，或某个反应组合没有对应 NTC 时，记为 warning 而不单独触发 HOLD；仍必须在人工复核中记录“无法排除污染”的局限。</li>" +
+      "<li>允许没有 NTC：不单独阻止分析、导出或人工放行，也无需填写额外 NTC 依据。系统自动保留 warning 与未设置 NTC 的审计记录；无法据此排除污染。</li>" +
       "<li>NTC 的 target 或内参任一通道出现数值 Ct 都会触发 blocker，并保留孔位、target 与 Ct 审计信息。</li>" +
       (ntc.assignment && ntc.assignment.note ? "<li>人工指定依据：" + escapeHtml(ntc.assignment.note) + "</li>" : "") + "</ul></div>" +
       '<div class="method-box"><h3>Confidence-like 与 |Z-score| 边界</h3><p>' + escapeHtml(a.methodBoundary) + '</p><ul>' + confidenceNotes + '</ul></div>' +

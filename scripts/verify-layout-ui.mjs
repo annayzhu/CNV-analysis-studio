@@ -38,6 +38,8 @@ try {
     await page.goto(pathToFileURL(path.join(root, "cnvtool.html")).href);
     await upload(page, "#file-input", instrument, "unnamed.xlsx");
     await page.waitForFunction(() => document.querySelector("#sample-status").textContent.includes("4 个孔缺少"));
+    assert.equal(await page.locator(".ntc-status").innerText(), "无 NTC（允许）");
+    assert.equal(await page.locator("#ntc-manual-fields").isHidden(), true);
     await page.locator("#supplement-layout").click();
     await page.locator("#layout-paste").fill("Well\tSample\nA1\tCal\nB1\tCal\nA2\t00123\nB2\t00123");
     await page.locator("#layout-read-paste").click();
