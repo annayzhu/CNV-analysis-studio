@@ -46,7 +46,7 @@
       var columns = {};
       var header = sheet.rows.findIndex(function (row) {
         Object.keys(ASSAY_FIELDS).forEach(function (field) { columns[field] = row.findIndex(function (cell) { return matches(cell, ASSAY_FIELDS[field]); }); });
-        return columns.target >= 0 && columns.assayId >= 0;
+        return columns.target >= 0;
       });
       if (header < 0) return;
       sheet.rows.slice(header + 1).forEach(function (row) {
@@ -80,7 +80,7 @@
         if (!sheet.rows.length || !wellName(sheet.rows[0][0])) return;
         wellColumn = 0; sampleColumn = 1; plateColumn = -1;
       }
-      var suffix = /P(\d+)$/i.exec(sheet.name);
+      var suffix = /^(?:Well Details |Paste_QS_|Paste_Legacy_)P(\d+)$/i.exec(sheet.name);
       var defaultId = suffix ? "P" + suffix[1].padStart(2, "0") : sheet.name;
       sheet.rows.slice(header + 1).forEach(function (row, index) {
         var sample = text(row[sampleColumn]);

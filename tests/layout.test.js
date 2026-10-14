@@ -30,6 +30,11 @@ test("a selected planner plate fills only missing sample names and reproduces na
     { name: "Well Details P02", rows: [["Well", "Sample"], ["A1", "Other plate"]] },
   ]);
   assert.deepEqual(document.plates.map(p => p.id), ["P01", "P02"]);
+  const unrelated = layout.parseSheets([
+    { name: "RunA_P01", rows: [["Well", "Sample"], ["A1", "One"]] },
+    { name: "RunB_P01", rows: [["Well", "Sample"], ["A2", "Two"]] },
+  ]);
+  assert.deepEqual(unrelated.plates.map(p => p.id), ["RunA_P01", "RunB_P01"]);
   const named = core.parseAoA([
     ["Well", "Sample", "Target", "CT"],
     ...["A1", "A2", "A3", "A4"].flatMap((well, index) => [
@@ -96,4 +101,12 @@ test("planner registration fills available blanks without guessing reagents or o
   assert.equal(result.assays[1].assayId, ""); // Reporter mismatch: not the same assay.
   assert.equal(original.assays[0].assayId, "");
   assert.equal(original.reactionVolume, undefined);
+  const partial = layout.parseSheets([
+    { name: "Samples", rows: [["Well", "Sample"], ["A1", "00123"]] },
+    { name: "Assays", rows: [["Target", "Reporter", "Brand", "Lot"], ["GSTM1", "FAM", "Provided vendor", "Lot-01"]] },
+  ]);
+  const partialResult = layout.fillRegistration(original, partial.registration, "partial.xlsx");
+  assert.equal(partialResult.assays[0].brand, "Provided vendor");
+  assert.equal(partialResult.assays[0].lot, "Lot-01");
+  assert.equal(partialResult.assays[0].assayId, "");
 });

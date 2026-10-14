@@ -1,5 +1,5 @@
 export const OFFLINE_ENTRY_COMMENT =
-  "<!-- 本地离线入口：请与 styles.css、diagnostics.js、app.js、core.js 和 vendor 文件夹一起使用。 -->\n";
+  "<!-- 本地离线入口：请与 styles.css、diagnostics.js、app.js、core.js、layout.js 和 vendor 文件夹一起使用。 -->\n";
 
 export const DESCRIPTION_META =
   '  <meta name="description" content="基于 CopyCaller 公开原理的 qPCR CNV 分析工具">\n';
