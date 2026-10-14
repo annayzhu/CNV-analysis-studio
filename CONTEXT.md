@@ -43,6 +43,16 @@ and manual approval eligibility. The browser and workbook export are adapters ov
 the same `reviewRegistration` interface; scientific `HOLD` remains distinct from
 missing registration fields and human review status.
 
+## Plate layout supplementation
+
+**Plate layout supplementation** fills missing sample identities by an explicitly
+selected plate and physical well. `CopyNumberLayout` accepts named two-dimensional
+sheets from file and clipboard adapters; it does not read files or mutate input
+records. Existing names and measurements remain unchanged. Registration metadata
+is fill-only and applied only when the layout was selected before instrument import.
+Saved assignments and exported source names keep the correction traceable. Unnamed
+measurements remain auditable but do not form an anonymous CN result.
+
 ## Sites static delivery
 
 **Sites static delivery** is an adapter for the same browser application used by the

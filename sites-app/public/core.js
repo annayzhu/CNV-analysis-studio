@@ -188,13 +188,14 @@
         var field = headerField(cell);
         if (field && mapped[field] === undefined) mapped[field] = columnIndex;
       });
-      var required = ["sampleName", "targetName", "ct"].filter(function (key) { return mapped[key] !== undefined; }).length;
+      var required = mapped.targetName !== undefined && mapped.ct !== undefined;
       var wellFound = mapped.wellPosition !== undefined || mapped.wellNumber !== undefined;
-      var score = Object.keys(mapped).length + (required === 3 && wellFound ? 20 : 0);
+      if (!required || !wellFound) return;
+      var score = Object.keys(mapped).length;
       if (!best || score > best.score) best = { rowIndex: rowIndex, columns: mapped, score: score };
     });
-    if (!best || best.score < 24) {
-      throw new Error("无法识别结果表头：至少需要 Well/Well Position、Sample Name、Target Name 和 CT 列。");
+    if (!best) {
+      throw new Error("无法识别结果表头：至少需要 Well/Well Position、Target Name 和 CT 列；样本名可稍后补录。");
     }
     return best;
   }
@@ -259,7 +260,9 @@
         EXPFAIL: toBoolean(valueAt(row, columns, "expFail"))
       }
     };
-    if (!record.wellPosition && record.wellNumber !== null) record.wellPosition = String(record.wellNumber);
+    if (!record.wellPosition) record.wellPosition = normalizeName(valueAt(row, columns, "wellNumber")).toUpperCase();
+    var position = parseWellPosition(record.wellPosition);
+    if (position) record.wellPosition = position.label;
     return record;
   }
 
@@ -269,12 +272,10 @@
     var dataRows = [];
     for (var i = header.rowIndex + 1; i < aoa.length; i += 1) {
       var row = aoa[i] || [];
-      var sample = normalizeText(valueAt(row, header.columns, "sampleName"));
       var target = normalizeText(valueAt(row, header.columns, "targetName"));
       var well = valueAt(row, header.columns, "wellPosition");
       if (well === null || well === undefined || normalizeText(well) === "") well = valueAt(row, header.columns, "wellNumber");
-      if (!sample && !target && (well === null || well === undefined || normalizeText(well) === "")) continue;
-      if (!sample || !target) continue;
+      if (!target || !normalizeText(well)) continue;
       records.push(normalizeRecord(row, header.columns, i + 1));
       dataRows.push(i);
     }
@@ -479,7 +480,7 @@
     var issues = [];
     Object.keys(byWell).forEach(function (well) {
       var rows = byWell[well];
-      var samples = unique(rows.map(function (r) { return r.sampleName; }));
+      var samples = unique(rows.map(function (r) { return r.sampleName; }).filter(Boolean));
       if (samples.length > 1) issues.push(diagnostic("WELL_SAMPLE_CONFLICT", "blocker", { well: well, sampleNames: samples }));
       var targetCounts = {};
       rows.forEach(function (record) { targetCounts[normalizeKey(record.targetName)] = (targetCounts[normalizeKey(record.targetName)] || 0) + 1; });
@@ -502,6 +503,8 @@
 
   function validateRunMetadata(records, metadata, referenceName, plateFormat) {
     var issues = [];
+    var missingSamples = unique(records.filter(function (r) { return !r.sampleName && !isNtc(r); }).map(function (r) { return r.wellPosition; }));
+    if (missingSamples.length) issues.push(diagnostic("MISSING_SAMPLE_NAMES", "blocker", { wells: missingSamples }));
     var reporters = unique(records.map(function (r) { return r.reporter; }).filter(Boolean));
     reporters.forEach(function (reporter) {
       var value = getMetadata(metadata, "Calibration Pure Dye " + reporter + " is expired");
@@ -747,6 +750,7 @@
         else analysisState = "NTC_CLEAR";
         if (record.omit) qcCodes.push("SOURCE_OMIT");
       }
+      else if (!record.sampleName) { analysisState = "MISSING_SAMPLE"; qcCodes.push("MISSING_SAMPLE"); }
       else if (record.omit) { analysisState = "OMIT"; qcCodes.push("OMIT"); }
       else if (!ref) { analysisState = "INVALID_REFERENCE"; qcCodes.push("NO_REFERENCE_ROW"); }
       else if (ref.ct === null) { analysisState = "INVALID_REFERENCE"; qcCodes.push("NOVIC"); }
@@ -763,6 +767,8 @@
         wellPosition: record.wellPosition,
         wellNumber: record.wellNumber,
         sampleName: record.sampleName,
+        originalSampleName: record.originalSampleName === undefined ? record.sampleName : record.originalSampleName,
+        sampleNameSource: record.sampleNameSource || "仪器文件",
         sampleRole: sampleRole,
         roleSource: record.roleSource || "",
         ntcAssignmentMode: record.ntcAssignmentMode || "",
@@ -787,7 +793,7 @@
   function summarizeAssay(assay, settings) {
     var wellsBySample = {};
     assay.wells.forEach(function (well) {
-      if (well.sampleRole === "NTC") return;
+      if (well.sampleRole === "NTC" || !well.sampleName) return;
       if (!wellsBySample[well.sampleName]) wellsBySample[well.sampleName] = [];
       wellsBySample[well.sampleName].push(well);
     });
@@ -1107,7 +1113,8 @@
           target: w.targetName,
           panel: w.panelSignature,
           sample: w.sampleName,
-          original_sample: w.sampleName,
+          original_sample: w.originalSampleName,
+          sample_name_source: w.sampleNameSource,
           sample_role: w.sampleRole,
           role_source: w.roleSource,
           ntc_assignment_mode: w.ntcAssignmentMode,
@@ -1284,6 +1291,8 @@
         "Well": record.wellPosition,
         "Well number": record.wellNumber,
         "Sample ID": record.sampleName,
+        "仪器样本名": record.originalSampleName === undefined ? record.sampleName : record.originalSampleName,
+        "样本名来源": record.sampleNameSource || "仪器文件",
         "样本角色": record.sampleRole || "SAMPLE",
         "角色来源": record.roleSource || "",
         "Task": record.task,
@@ -1495,6 +1504,7 @@
       if (finalBlockers.length) recordedDecision = "待复核（放行条件未满足：" + finalBlockers.join("；") + "）";
     }
     var rows = [
+      { "字段": "Master Mix 名称", "本次记录": registration.masterMixName || "", "来源": "板布局 / 人工登记" },
       { "字段": "记录版本 / 状态", "本次记录": exportValue(registration.protocolVersion, "待填写") + " / " + exportValue(registration.recordStatus, "草稿"), "来源": "人工登记" },
       { "字段": "Run ID / Plate ID / Analysis ID", "本次记录": audit.runId + " / " + audit.plateId + " / " + audit.analysisId, "来源": "自动 + 人工" },
       { "字段": "实验日期 / 操作人", "本次记录": exportValue(registration.experimentDate, "待填写") + " / " + exportValue(registration.operator, "待填写"), "来源": "自动建议 + 人工确认" },
@@ -1502,6 +1512,7 @@
       { "字段": "板型 / 反应体积 / Experiment type", "本次记录": analysis.plateFormat + "-well / " + exportValue(registration.reactionVolume, "反应体积待填写") + " / " + exportValue(experimentMode, "未记录"), "来源": "自动 + 人工" },
       { "字段": "Master Mix：品牌 / Cat. / 批号 / 有效期", "本次记录": joinExportParts([exportValue(registration.masterMixBrand, "品牌待填写"), exportValue(registration.masterMixCatalog, "Cat.待填写"), exportValue(registration.masterMixLot, "批号待填写"), exportValue(registration.masterMixExpiry, "有效期待填写")]), "来源": "人工登记" }
     ].concat(reagentRows);
+    if (registration.layoutImport) rows.push({ "字段": "板布局登记补入记录", "本次记录": registration.layoutImport.source + "；补入字段：" + registration.layoutImport.fields.join("、"), "来源": "板布局导入；当前值以人工核对为准" });
     (analysis.assays || []).forEach(function (assay) {
       var config = assay.calibration.config || {};
       rows.push({
@@ -1566,7 +1577,7 @@
       { name: "批次质控", rows: batchQcRows(analysis, audit), headers: ["QC 项目", "检查对象", "观察结果", "状态", "说明/建议", "Run ID", "Plate ID", "Analysis ID"] },
       { name: "CN计算明细", rows: sampleCnRows(analysis, audit), headers: ["Sample ID", "Target", "反应组合", "CN 判定", "连续 CN", "结果状态", "0-copy 依据", "批次状态", "有效复孔", "Target Ct mean", "Reference Ct mean", "Mean ΔCt", "SD(ΔCt)", "ΔΔCt", "RQ", "CN 区间", "Confidence-like", "|Z|", "校准", "Flags", "Run ID", "Plate ID", "Analysis ID"] },
       { name: "复孔质控", rows: replicateQcRows(analysis, audit), headers: ["Sample ID", "Target", "反应组合", "孔位", "Target Ct 列表", "Target Ct mean", "Target Ct SD", "Target Ct CV", "Target 最大 Ct 差", "Reference Ct 列表", "Reference Ct mean", "Reference Ct SD", "Reference Ct CV", "ΔCt 列表", "Mean ΔCt", "SD(ΔCt)", "SD(ΔCt)预警阈值", "有效复孔", "自动结论", "0-copy 依据", "Flags", "Run ID", "Plate ID", "Analysis ID"] },
-      { name: "原始Ct", rows: rawCtRows(analysis, audit), headers: ["Well", "Well number", "Sample ID", "样本角色", "角色来源", "Task", "Target", "Reporter", "Quencher", "Ct", "Ct raw", "Ct mean(source)", "Ct SD(source)", "ΔCt(source)", "Mean ΔCt(source)", "SD(ΔCt)(source)", "ΔΔCt(source)", "RQ(source)", "RQ min(source)", "RQ max(source)", "Amp Status", "Cq Confidence", "THOLDFAIL", "CQCONF", "NOAMP", "EXPFAIL", "Omit", "Automatic Ct Threshold", "Ct Threshold", "Automatic Baseline", "Baseline Start", "Baseline End", "Comments", "反应组合", "源文件行", "Run ID", "Plate ID", "Analysis ID"] },
+      { name: "原始Ct", rows: rawCtRows(analysis, audit), headers: ["Well", "Well number", "Sample ID", "仪器样本名", "样本名来源", "样本角色", "角色来源", "Task", "Target", "Reporter", "Quencher", "Ct", "Ct raw", "Ct mean(source)", "Ct SD(source)", "ΔCt(source)", "Mean ΔCt(source)", "SD(ΔCt)(source)", "ΔΔCt(source)", "RQ(source)", "RQ min(source)", "RQ max(source)", "Amp Status", "Cq Confidence", "THOLDFAIL", "CQCONF", "NOAMP", "EXPFAIL", "Omit", "Automatic Ct Threshold", "Ct Threshold", "Automatic Baseline", "Baseline Start", "Baseline End", "Comments", "反应组合", "源文件行", "Run ID", "Plate ID", "Analysis ID"] },
       { name: "NTC审计", rows: ntcAuditRows(analysis, audit), headers: ["Well", "Well number", "原样本名", "角色来源", "NTC 指定方式", "人工确认", "指定依据", "反应组合", "Target", "Reporter", "Ct", "Amp Status", "NTC QC", "源文件行", "Run ID", "Plate ID", "Analysis ID"] },
       { name: "校准记录", rows: calibrationRows(analysis, audit), headers: ["Target", "反应组合", "校准方式", "校准有效", "所选校准样本/组", "已知 CN", "独立确认", "确认依据/记录编号", "选择备注/替换原因", "预期众数 CN", "校准标签", "K", "仪器记录 Reference Sample", "错误", "警告", "板内 ΔCt SD", "质量模型", "Run ID", "Plate ID", "Analysis ID"] },
       { name: "分析参数", rows: parameterRows(analysis, audit), headers: ["参数", "值", "Run ID", "Plate ID", "Analysis ID"] },

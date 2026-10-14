@@ -17,6 +17,7 @@ export const BROWSER_ASSETS = Object.freeze([
   Object.freeze({ source: "styles.css", siteTarget: "sites-app/public/styles.css" }),
   Object.freeze({ source: "diagnostics.js", siteTarget: "sites-app/public/diagnostics.js" }),
   Object.freeze({ source: "core.js", siteTarget: "sites-app/public/core.js" }),
+  Object.freeze({ source: "layout.js", siteTarget: "sites-app/public/layout.js" }),
   Object.freeze({ source: "app.js", siteTarget: "sites-app/public/app.js" }),
   Object.freeze({ source: "vendor/xlsx.full.min.js", siteTarget: "sites-app/public/vendor/xlsx.full.min.js" }),
 ]);

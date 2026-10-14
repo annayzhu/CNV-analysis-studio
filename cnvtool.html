@@ -52,6 +52,25 @@
         <span class="status-dot status-dot--idle"></span>
         <span>尚未导入数据</span>
       </div>
+      <details id="layout-panel" class="layout-panel">
+        <summary id="layout-summary">添加板布局（可选）</summary>
+        <p id="layout-help">可先添加 CNV 板布局，导入仪器结果后按孔位补全样本名，并补入文件中已有的实验与试剂信息。</p>
+        <div class="layout-actions">
+          <label class="button button--quiet layout-file-label">上传板布局 / 已填模板<input id="layout-file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt"></label>
+          <label id="layout-template-format-label">模板板型<select id="layout-template-format"><option value="384">384 孔</option><option value="96">96 孔</option></select></label>
+          <button id="layout-template" class="button button--quiet" type="button">下载空白模板</button>
+        </div>
+        <label class="layout-paste-label" for="layout-paste">或粘贴 Excel 的 Well / Sample 两列（可含表头）</label>
+        <textarea id="layout-paste" rows="4" spellcheck="false" placeholder="Well&#9;Sample&#10;A1&#9;样本001&#10;A2&#9;样本001"></textarea>
+        <button id="layout-read-paste" class="button button--quiet" type="button">读取粘贴内容</button>
+        <div id="layout-preview" class="layout-preview" hidden>
+          <label>对应实验板<select id="layout-plate"></select></label>
+          <p id="layout-preview-count" role="status"></p>
+          <div id="layout-preview-table" class="table-wrap"></div>
+          <button id="layout-apply" class="button button--primary" type="button" disabled>使用此板布局</button>
+        </div>
+        <p id="layout-message" class="layout-message" role="status"></p>
+      </details>
     </section>
 
     <div id="workspace" class="workspace is-hidden">
@@ -61,6 +80,10 @@
         <article><span class="summary-label">Assay 层</span><strong id="stat-assays">—</strong><small>按 target / panel</small></article>
         <article><span class="summary-label">内参</span><strong id="stat-reference">—</strong><small>可在下方确认</small></article>
         <article class="summary-release"><span class="summary-label">放行状态</span><strong id="stat-release">—</strong><small>分析可查看，放行受 QC 控制</small></article>
+      </section>
+
+      <section id="sample-section" class="sample-section" aria-label="样本信息">
+        <div class="sample-section__heading"><div><h2>样本信息</h2><p id="sample-status"></p></div><button id="supplement-layout" class="button button--quiet" type="button" aria-controls="layout-panel" aria-expanded="false">补充板布局信息</button></div>
       </section>
 
       <nav class="workflow-nav" aria-label="分析导航">
@@ -190,6 +213,7 @@
           <summary>试剂批次与复核信息</summary>
           <div class="record-subsection">
             <h3>Master Mix</h3>
+            <label class="record-mix-name"><span>试剂名称</span><input id="record-mix-name" placeholder="例如 2X TaqMan Genotyping Master Mix"></label>
             <div class="record-grid record-grid--four">
               <label><span>品牌</span><input id="record-mix-brand" placeholder="品牌"></label>
               <label><span>Cat.</span><input id="record-mix-catalog" placeholder="货号"></label>
@@ -284,6 +308,7 @@
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="diagnostics.js"></script>
   <script src="core.js"></script>
+  <script src="layout.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

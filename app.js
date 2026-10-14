@@ -3,6 +3,7 @@
 
   var diagnostics = window.CopyNumberDiagnostics;
   var core = window.CopyNumberCore;
+  var layout = window.CopyNumberLayout;
   var REGISTRATION_STORAGE_KEY = "cnv-analysis-registration-presets-v1";
   var REGISTRATION_RECORDS_STORAGE_KEY = "cnv-analysis-registration-records-v1";
   var state = {
@@ -14,7 +15,18 @@
     settings: Object.assign({}, core.DEFAULTS, { calibrations: {} }),
     registration: null,
     registrationSavedAt: "",
-    registrationDirty: false
+    registrationDirty: false,
+    layoutDraft: null,
+    pendingLayout: null,
+    sampleAssignments: []
+  };
+
+  var RECORD_INPUTS = {
+    runId: "record-run-id", plateId: "record-plate-id", analysisId: "record-analysis-id", experimentDate: "record-date",
+    operator: "record-operator", reactionVolume: "record-volume", protocolVersion: "record-protocol", recordStatus: "record-status",
+    masterMixName: "record-mix-name", masterMixBrand: "record-mix-brand", masterMixCatalog: "record-mix-catalog",
+    masterMixLot: "record-mix-lot", masterMixExpiry: "record-mix-expiry", finalDecision: "record-final-decision",
+    reviewer: "record-reviewer", reviewDate: "record-review-date", reviewNote: "record-review-note", notes: "record-notes"
   };
 
   function $(selector, root) { return (root || document).querySelector(selector); }
@@ -37,13 +49,7 @@
   }
 
   function unique(values) {
-    var seen = {};
-    return values.filter(function (value) {
-      var key = String(value);
-      if (seen[key]) return false;
-      seen[key] = true;
-      return true;
-    });
+    return Array.from(new Set(values));
   }
 
   function toast(message) {
@@ -117,10 +123,7 @@
     var saved = loadRegistrationRecords()[currentRegistrationRecordKey()];
     if (!saved || !saved.registration) return false;
     var restored = saved.registration;
-    var scalarFields = [
-      "runId", "plateId", "analysisId", "experimentDate", "operator", "reactionVolume", "protocolVersion", "recordStatus",
-      "masterMixBrand", "masterMixCatalog", "masterMixLot", "masterMixExpiry", "finalDecision", "reviewer", "reviewDate", "reviewNote", "notes", "approvalInvalidated"
-    ];
+    var scalarFields = Object.keys(RECORD_INPUTS).concat(["approvalInvalidated", "layoutImport"]);
     scalarFields.forEach(function (field) {
       if (Object.prototype.hasOwnProperty.call(restored, field)) state.registration[field] = restored[field];
     });
@@ -141,6 +144,11 @@
       state.settings.calibrations = saved.settings.calibrations || {};
       state.settings.ntcAssignment = saved.settings.ntcAssignment || core.DEFAULTS.ntcAssignment;
     }
+    state.sampleAssignments = saved.sampleAssignments || [];
+    state.sampleAssignments.forEach(function (assignment) {
+      var restoredSamples = layout.applySamples(state.parsed.records, assignment.plate, assignment.source);
+      state.parsed.records = restoredSamples.records;
+    });
     state.registrationSavedAt = saved.savedAt || "";
     state.registrationDirty = false;
     return true;
@@ -173,16 +181,18 @@
     r.recordStatus = "已记录";
     r.approvalInvalidated = true;
     if (!(options && options.preserveReviewDate)) r.reviewDate = "";
-    if ($("#record-status")) $("#record-status").value = r.recordStatus;
-    if ($("#record-review-date")) $("#record-review-date").value = r.reviewDate;
-    updateFinalDecisionOptions();
-    updateRegistrationStatus();
+    if (state.analysis) {
+      $("#record-status").value = r.recordStatus;
+      $("#record-review-date").value = r.reviewDate;
+      updateFinalDecisionOptions();
+      updateRegistrationStatus();
+    }
     return true;
   }
 
   function markRegistrationDirty(options) {
     if (!state.registration) return;
-    invalidateApproval(options && options.invalidateApproval ? options : null);
+    if (options && options.invalidateApproval) invalidateApproval(options);
     state.registrationDirty = true;
     updateRegistrationSaveStatus();
   }
@@ -208,8 +218,9 @@
     records[currentRegistrationRecordKey()] = {
       savedAt: savedAt,
       sourceFile: state.fileName,
-      registration: JSON.parse(JSON.stringify(state.registration)),
-      settings: JSON.parse(JSON.stringify(state.settings))
+      registration: state.registration,
+      settings: state.settings,
+      sampleAssignments: state.sampleAssignments
     };
     var orderedKeys = Object.keys(records).sort(function (a, b) {
       return String(records[b].savedAt || "").localeCompare(String(records[a].savedAt || ""));
@@ -277,6 +288,7 @@
       protocolVersion: presets.protocolVersion || "",
       recordStatus: "草稿",
       masterMixBrand: presets.masterMixBrand || "",
+      masterMixName: "",
       masterMixCatalog: presets.masterMixCatalog || "",
       masterMixLot: "",
       masterMixExpiry: "",
@@ -290,7 +302,7 @@
     };
   }
 
-  function parseWorkbook(arrayBuffer, fileName) {
+  function parseWorkbook(arrayBuffer) {
     var workbook = XLSX.read(arrayBuffer, { type: "array", raw: true, cellDates: false, dense: false });
     var candidates = [];
     var failures = [];
@@ -305,37 +317,137 @@
     });
     if (!candidates.length) throw new Error("工作簿中没有可识别的孔级 Ct 结果表。" + (failures.length ? " " + failures.join(" | ") : ""));
     candidates.sort(function (a, b) { return b.rows - a.rows; });
-    state.fileName = fileName;
-    state.sheetName = candidates[0].sheetName;
-    return candidates[0].parsed;
+    return candidates[0];
   }
 
-  function handleFile(file) {
+  async function handleFile(file) {
     if (!file) return;
-    state.fileFingerprint = fallbackFileFingerprint(file);
-    state.registrationSavedAt = "";
-    state.registrationDirty = false;
+    var request = ++handleFile.request;
     setFileStatus("loading", "正在本地解析 " + file.name + " …");
-    var reader = new FileReader();
-    reader.onerror = function () { setFileStatus("error", "文件读取失败。"); };
-    reader.onload = async function () {
-      try {
-        state.fileFingerprint = await computeFileFingerprint(reader.result, file);
-        state.parsed = parseWorkbook(reader.result, file.name);
-        state.settings = Object.assign({}, core.DEFAULTS, { calibrations: {} });
-        initializeRegistration();
-        var restored = restoreRegistrationRecord();
-        runAnalysis();
-        setFileStatus("ok", file.name + " · 工作表 " + state.sheetName + " · 表头位于第 " + state.parsed.headerRow + " 行" + (restored ? " · 已恢复本机登记" : ""));
-        $("#workspace").classList.remove("is-hidden");
-        $("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch (error) {
-        console.error(error);
-        setFileStatus("error", error.message);
-        toast("导入失败：" + error.message);
+    try {
+      var buffer = await file.arrayBuffer();
+      var fingerprint = await computeFileFingerprint(buffer, file);
+      if (request !== handleFile.request) return;
+      var imported = parseWorkbook(buffer);
+      state.fileName = file.name;
+      state.sheetName = imported.sheetName;
+      state.fileFingerprint = fingerprint;
+      state.parsed = imported.parsed;
+      state.registrationSavedAt = "";
+      state.registrationDirty = false;
+      state.sampleAssignments = [];
+      state.analysis = null;
+      state.settings = Object.assign({}, core.DEFAULTS, { calibrations: {} });
+      initializeRegistration();
+      var restored = restoreRegistrationRecord();
+      if (state.pendingLayout) {
+        applyLayout(state.pendingLayout, true);
+        state.pendingLayout = null;
       }
-    };
-    reader.readAsArrayBuffer(file);
+      runAnalysis();
+      setFileStatus("ok", file.name + " · 工作表 " + state.sheetName + " · 表头位于第 " + state.parsed.headerRow + " 行" + (restored ? " · 已恢复本机登记" : ""));
+      $("#workspace").classList.remove("is-hidden");
+      $("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      if (request !== handleFile.request) return;
+      console.error(error);
+      setFileStatus("error", error.message);
+      toast("导入失败：" + error.message);
+    }
+  }
+  handleFile.request = 0;
+
+  function readLayoutWorkbook(input, source, type) {
+    var workbook = XLSX.read(input, { type: type, raw: true });
+    var parsed = layout.parseSheets(workbook.SheetNames.map(function (name) {
+      return { name: name, rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, defval: "" }) };
+    }));
+    state.layoutDraft = { document: parsed, source: source };
+    $("#layout-plate").innerHTML = (parsed.plates.length > 1 ? '<option value="">请选择对应的实验板…</option>' : "") + parsed.plates.map(function (plate, i) {
+      return '<option value="' + i + '">' + escapeHtml(plate.id) + " · " + Object.keys(plate.samples).length + " 孔</option>";
+    }).join("");
+    $("#layout-preview").hidden = false;
+    layoutMessage(source + " 已读取，请核对孔位与样本后应用。");
+    renderLayoutPreview();
+  }
+
+  function layoutMessage(message, error) {
+    $("#layout-message").textContent = message;
+    $("#layout-message").classList.toggle("is-error", !!error);
+  }
+
+  function selectedLayout() {
+    var index = $("#layout-plate").value;
+    if (!state.layoutDraft || index === "") return null;
+    return { plate: state.layoutDraft.document.plates[Number(index)], registration: state.layoutDraft.document.registration, source: state.layoutDraft.source };
+  }
+
+  function renderLayoutPreview() {
+    var selected = selectedLayout();
+    $("#layout-apply").disabled = !selected;
+    $("#layout-preview-table").innerHTML = "";
+    $("#layout-preview-count").textContent = "";
+    if (!selected) return;
+    var rows = Object.entries(selected.plate.samples);
+    var preview = state.parsed ? layout.applySamples(state.parsed.records, selected.plate, selected.source) : null;
+    $("#layout-preview-count").textContent = preview ? "可补全 " + preview.filledWells.length + " 孔；已有样本名冲突 " + preview.conflicts.length + " 孔（保留原值）；结果中未出现 " + preview.unmatchedWells.length + " 孔（不导入）。" : rows.length + " 个有样本名的孔；导入仪器结果后匹配。";
+    $("#layout-preview-table").innerHTML = "<table><thead><tr><th>Well</th><th>Sample</th></tr></thead><tbody>" + rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td><td>" + escapeHtml(row[1]) + "</td></tr>"; }).join("") + "</tbody></table>";
+  }
+
+  function applyLayout(selected, includeRegistration) {
+    var applied = layout.applySamples(state.parsed.records, selected.plate, selected.source);
+    state.parsed.records = applied.records;
+    if (applied.filledWells.length) {
+      // Persist only the applied mapping, not every unrelated plate in the workbook.
+      state.sampleAssignments.push({
+        plate: { id: selected.plate.id, samples: Object.fromEntries(applied.filledWells.map(function (well) { return [well, selected.plate.samples[well]]; })) },
+        source: selected.source
+      });
+    }
+    if (includeRegistration) state.registration = layout.fillRegistration(state.registration, selected.registration, selected.source + " / " + selected.plate.id);
+    if (applied.filledWells.length || (includeRegistration && state.registration.layoutImport)) {
+      markRegistrationDirty({ invalidateApproval: true });
+    }
+    layoutMessage("已补全 " + applied.filledWells.length + " 个孔。" + (applied.conflicts.length ? "以下孔保留原样本名：" + applied.conflicts.join("、") + "。" : "") + (includeRegistration ? "布局中可匹配的实验与试剂信息已补入空白字段。" : "仅补充样本与孔位，实验登记保持原值。"));
+  }
+
+  function applyLayoutFromUi() {
+    var selected = selectedLayout();
+    if (!selected) return;
+    if (!state.parsed) {
+      state.pendingLayout = selected;
+      layoutMessage("已选择 " + selected.plate.id + "，接下来导入仪器结果即可。");
+      return;
+    }
+    syncRegistrationFromUi();
+    applyLayout(selected, false);
+    runAnalysis();
+    renderLayoutPreview();
+  }
+
+  function renderSampleInfo() {
+    var records = state.analysis.records;
+    var missing = unique(records.filter(function (r) { return !r.sampleName && r.sampleRole !== "NTC"; }).map(function (r) { return r.wellPosition; }));
+    var filled = unique(records.filter(function (r) { return r.sampleNameSource; }).map(function (r) { return r.wellPosition; }));
+    $("#sample-status").textContent = missing.length ? missing.length + " 个孔缺少样本名（" + missing.slice(0, 12).join("、") + (missing.length > 12 ? "…" : "") + "）。补全后自动重新计算。" : "样本信息完整" + (filled.length ? " · 已从板布局补录 " + filled.length + " 孔" : "");
+    $("#sample-section").appendChild($("#layout-panel"));
+    $("#layout-summary").textContent = "补充板布局信息";
+    $("#layout-help").textContent = "按所选板的孔位补全缺失样本名。已有样本名、Ct、试剂和实验登记保持原值。";
+    $("#layout-template-format-label").hidden = true;
+    $("#layout-apply").textContent = "补全样本并重新分析";
+  }
+
+  function downloadLayoutTemplate() {
+    var count = Number($("#layout-template-format").value);
+    var columns = count === 384 ? 24 : 12;
+    var wells = state.parsed ? state.parsed.records.map(function (r) { return r.wellPosition; }) : Array.from({ length: count }, function (_, i) { return String.fromCharCode(65 + Math.floor(i / columns)) + (i % columns + 1); });
+    var workbook = XLSX.utils.book_new();
+    var sheet = XLSX.utils.aoa_to_sheet(layout.templateRows(wells));
+    sheet["!cols"] = [{ wch: 12 }, { wch: 28 }];
+    // Excel must retain leading zeros when the user fills Sample cells.
+    for (var row = 1; row <= unique(wells).length; row += 1) sheet[XLSX.utils.encode_cell({ r: row, c: 1 })] = { t: "s", v: "", z: "@" };
+    XLSX.utils.book_append_sheet(workbook, sheet, "Samples");
+    XLSX.writeFile(workbook, "CNV_样本补录模板.xlsx");
   }
 
   function runAnalysis() {
@@ -347,6 +459,7 @@
 
   function renderAll() {
     renderSummary();
+    renderSampleInfo();
     renderQc();
     renderNtcSetup();
     renderMetadata();
@@ -354,13 +467,14 @@
     renderCalibration();
     renderRegistration();
     renderResultsFilter();
-    renderResultsTable();
-    renderCopyNumberPlot();
-    renderDeltaCtPlot();
-    renderPlateMap();
-    renderWellTable();
-    renderMethodNotes();
+    renderActiveResult();
   }
+
+  function renderActiveResult() {
+    RESULT_RENDERERS[$(".result-tab.is-active").dataset.tab]();
+  }
+
+  var RESULT_RENDERERS = { summary: renderResultsTable, copyplot: renderCopyNumberPlot, dctplot: renderDeltaCtPlot, plate: renderPlateMap, wells: renderWellTable, method: renderMethodNotes };
 
   function renderSummary() {
     var a = state.analysis;
@@ -638,7 +752,6 @@
   function updateFinalDecisionOptions() {
     var select = $("#record-final-decision");
     if (!select || !state.registration || !state.analysis) return;
-    var missing = registrationMissingItems();
     var review = core.reviewRegistration(state.analysis, state.registration, false);
     var automaticHold = state.analysis.releaseStatus === "HOLD";
     var canRelease = review.canApprove;
@@ -668,21 +781,10 @@
   function syncRegistrationFromUi() {
     if (!state.registration || !$("#record-run-id")) return;
     var r = state.registration;
-    r.plateId = $("#record-plate-id").value.trim();
-    r.experimentDate = $("#record-date").value;
-    r.operator = $("#record-operator").value.trim();
-    r.reactionVolume = $("#record-volume").value.trim();
-    r.protocolVersion = $("#record-protocol").value.trim();
-    r.recordStatus = $("#record-status").value;
-    r.masterMixBrand = $("#record-mix-brand").value.trim();
-    r.masterMixCatalog = $("#record-mix-catalog").value.trim();
-    r.masterMixLot = $("#record-mix-lot").value.trim();
-    r.masterMixExpiry = $("#record-mix-expiry").value;
-    r.finalDecision = $("#record-final-decision").value;
-    r.reviewer = $("#record-reviewer").value.trim();
-    r.reviewDate = $("#record-review-date").value;
-    r.reviewNote = $("#record-review-note").value.trim();
-    r.notes = $("#record-notes").value.trim();
+    Object.keys(RECORD_INPUTS).forEach(function (field) {
+      var input = $("#" + RECORD_INPUTS[field]);
+      if (!input.readOnly) r[field] = input.value.trim();
+    });
     $all(".registration-assay-row").forEach(function (row) {
       var key = row.getAttribute("data-assay-key");
       var assay = (r.assays || []).filter(function (item) { return item.key === key; })[0];
@@ -727,22 +829,7 @@
   function renderRegistration() {
     if (!state.registration) return;
     var r = state.registration;
-    $("#record-run-id").value = r.runId;
-    $("#record-plate-id").value = r.plateId;
-    $("#record-analysis-id").value = r.analysisId;
-    $("#record-date").value = r.experimentDate;
-    $("#record-operator").value = r.operator;
-    $("#record-volume").value = r.reactionVolume;
-    $("#record-protocol").value = r.protocolVersion;
-    $("#record-status").value = r.recordStatus;
-    $("#record-mix-brand").value = r.masterMixBrand;
-    $("#record-mix-catalog").value = r.masterMixCatalog;
-    $("#record-mix-lot").value = r.masterMixLot;
-    $("#record-mix-expiry").value = r.masterMixExpiry;
-    $("#record-reviewer").value = r.reviewer;
-    $("#record-review-date").value = r.reviewDate;
-    $("#record-review-note").value = r.reviewNote;
-    $("#record-notes").value = r.notes;
+    Object.keys(RECORD_INPUTS).forEach(function (field) { $("#" + RECORD_INPUTS[field]).value = r[field] || ""; });
     updateFinalDecisionOptions();
     $("#record-assays").innerHTML = (r.assays || []).map(function (assay) {
       return '<div class="registration-assay-row" data-assay-key="' + escapeAttr(assay.key) + '">' +
@@ -760,10 +847,6 @@
     });
     updateRegistrationStatus();
     updateRegistrationSaveStatus();
-  }
-
-  function statusClass(status) {
-    return diagnostics.qualityClass(status);
   }
 
   function currentAssayFilter() {
@@ -805,7 +888,7 @@
         '<td class="is-number"><strong>' + (row.copy_number_predicted === null || row.copy_number_predicted === undefined ? "—" : row.copy_number_predicted) + "</strong></td>" +
         '<td class="is-number">' + (row.min_copy_number === null ? "—" : formatNumber(row.min_copy_number, 2) + "–" + formatNumber(row.max_copy_number, 2)) + "</td>" +
         numberCell(row.confidence_like, 3) + numberCell(row.absolute_z_score, 2) +
-        '<td><span class="status-chip status-chip--' + statusClass(row.quality_status) + '">' + escapeHtml(diagnostics.qualityLabel(row.quality_status)) + "</span></td>" +
+        '<td><span class="status-chip status-chip--' + diagnostics.qualityClass(row.quality_status) + '">' + escapeHtml(diagnostics.qualityLabel(row.quality_status)) + "</span></td>" +
         '<td class="flag-list">' + escapeHtml(row.flags || "—") + "</td></tr>";
     }).join("");
     if (!rows.length) html += '<tr><td colspan="17">没有匹配的结果。</td></tr>';
@@ -916,9 +999,10 @@
   }
 
   function wellSeverity(well) {
+    if (well.analysisState === "MISSING_SAMPLE") return { level: 4, cls: "warning", label: "样本名待补" };
     if (well.analysisState === "NTC_AMPLIFICATION") return { level: 5, cls: "invalid", label: "NTC 出现扩增" };
     if (well.analysisState === "NTC_CLEAR") return { level: 1, cls: "ntc", label: "NTC 无扩增" };
-    if (["INVALID_REFERENCE"].indexOf(well.analysisState) >= 0) return { level: 4, cls: "invalid", label: "内参无效" };
+    if (well.analysisState === "INVALID_REFERENCE") return { level: 4, cls: "invalid", label: "内参无效" };
     if (well.analysisState === "OUTLIER") return { level: 3, cls: "warning", label: "离群孔" };
     if (well.analysisState === "ZERO_EVIDENCE") return { level: 2, cls: "zero", label: "0-copy 证据" };
     if (well.analysisState === "OMIT") return { level: 3, cls: "warning", label: "已排除" };
@@ -965,10 +1049,10 @@
   function renderWellTable() {
     var key = currentAssayFilter();
     var rows = core.flattenWells(state.analysis).filter(function (row) { return key === "all" || row.assay === assayDisplayFromKey(key); });
-    var headers = ["Well", "原样本名", "角色", "角色来源", "Assay", "Target Ct", "Reference Ct", "ΔCt", "分析状态", "QC codes", "排除理由", "源行", "仪器 flags"];
+    var headers = ["Well", "样本名", "仪器样本名", "样本名来源", "角色", "角色来源", "Assay", "Target Ct", "Reference Ct", "ΔCt", "分析状态", "QC codes", "排除理由", "源行", "仪器 flags"];
     var html = "<table><thead><tr>" + headers.map(function (h) { return "<th>" + h + "</th>"; }).join("") + "</tr></thead><tbody>";
     html += rows.map(function (row) {
-      return "<tr><td><strong>" + escapeHtml(row.well) + "</strong></td><td>" + escapeHtml(row.original_sample) + '</td><td><span class="status-chip ' + (row.sample_role === "NTC" ? "status-chip--zero" : "status-chip--neutral") + '">' + escapeHtml(row.sample_role) + "</span></td><td>" + escapeHtml(row.role_source || "—") + "</td><td>" + escapeHtml(row.assay) + "</td>" +
+      return "<tr><td><strong>" + escapeHtml(row.well) + "</strong></td><td>" + escapeHtml(row.sample || "待补") + "</td><td>" + escapeHtml(row.original_sample || "—") + "</td><td>" + escapeHtml(row.sample_name_source) + '</td><td><span class="status-chip ' + (row.sample_role === "NTC" ? "status-chip--zero" : "status-chip--neutral") + '">' + escapeHtml(row.sample_role) + "</span></td><td>" + escapeHtml(row.role_source || "—") + "</td><td>" + escapeHtml(row.assay) + "</td>" +
         numberCell(row.target_ct, 3) + numberCell(row.reference_ct, 3) + numberCell(row.delta_ct, 3) +
         "<td>" + escapeHtml(row.analysis_state) + "</td><td>" + escapeHtml(row.qc_codes || "—") + "</td><td>" + escapeHtml(row.omitted_reason || "—") + "</td>" +
         '<td class="is-number">' + row.source_row + "</td><td>" + escapeHtml(row.source_flags || "—") + "</td></tr>";
@@ -1112,6 +1196,41 @@
   }
 
   function bindEvents() {
+    var layoutReadId = 0;
+    $("#layout-file").addEventListener("change", async function () {
+      var file = this.files[0];
+      if (!file) return;
+      var request = ++layoutReadId;
+      state.layoutDraft = null;
+      state.pendingLayout = null;
+      $("#layout-preview").hidden = true;
+      layoutMessage("正在读取板布局…");
+      try {
+        var buffer = await file.arrayBuffer();
+        if (request === layoutReadId) readLayoutWorkbook(buffer, file.name, "array");
+      } catch (error) { if (request === layoutReadId) layoutMessage(error.message, true); }
+      this.value = "";
+    });
+    $("#layout-read-paste").addEventListener("click", function () {
+      layoutReadId += 1;
+      state.layoutDraft = null;
+      state.pendingLayout = null;
+      $("#layout-preview").hidden = true;
+      try { readLayoutWorkbook($("#layout-paste").value, "粘贴表格", "string"); }
+      catch (error) { layoutMessage(error.message, true); }
+    });
+    $("#layout-plate").addEventListener("change", renderLayoutPreview);
+    $("#layout-apply").addEventListener("click", applyLayoutFromUi);
+    $("#layout-template").addEventListener("click", downloadLayoutTemplate);
+    $("#supplement-layout").addEventListener("click", function () {
+      var panel = $("#layout-panel");
+      panel.open = !panel.open;
+      if (panel.open) $("#layout-file").focus({ preventScroll: true });
+    });
+    $("#layout-panel").addEventListener("toggle", function () {
+      $("#supplement-layout").setAttribute("aria-expanded", String(this.open));
+      $("#supplement-layout").textContent = this.open ? "收起板布局补录" : "补充板布局信息";
+    });
     var input = $("#file-input");
     input.addEventListener("change", function () { handleFile(input.files[0]); input.value = ""; });
     var drop = $("#drop-zone");
@@ -1130,14 +1249,19 @@
       button.addEventListener("click", function () {
         $all(".result-tab").forEach(function (b) { b.classList.toggle("is-active", b === button); });
         $all(".tab-panel").forEach(function (panel) { panel.classList.toggle("is-active", panel.getAttribute("data-panel") === button.getAttribute("data-tab")); });
+        renderActiveResult();
       });
     });
-    $("#result-assay-filter").addEventListener("change", function () { renderResultsTable(); renderCopyNumberPlot(); renderDeltaCtPlot(); renderWellTable(); });
+    $("#result-assay-filter").addEventListener("change", renderActiveResult);
     $("#result-search").addEventListener("input", renderResultsTable);
     $("#export-xlsx").addEventListener("click", exportXlsx);
     $("#export-csv").addEventListener("click", exportCsv);
     $("#export-json").addEventListener("click", exportJson);
     $("#print-report").addEventListener("click", function () { window.print(); });
+    // Printing displays every panel, including those never opened on screen.
+    window.addEventListener("beforeprint", function () {
+      if (state.analysis) Object.values(RESULT_RENDERERS).forEach(function (render) { render(); });
+    });
   }
 
   bindEvents();

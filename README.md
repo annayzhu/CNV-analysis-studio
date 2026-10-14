@@ -17,6 +17,16 @@
 
 所有数据仅在当前浏览器页面中处理，不会上传到服务器。整个应用可以直接部署到任何静态站点。
 
+## 板布局与缺失样本名
+
+- **开始分析前（可选）**：展开“添加板布局”，上传 CNV 板布局工作簿、选择对应板并应用，再导入仪器结果。程序按孔位补齐缺失样本名，并将可匹配的实验/试剂信息补入登记空白项。
+- **开始分析后**：在“样本信息”点击“补充板布局信息”，上传布局表/已填模板，或粘贴 Excel 的 `Well` / `Sample` 两列。此入口只补样本与孔位，不修改实验登记。
+- **下载模板**：分析前可选 96/384 孔；分析后模板只列出本次导入的物理孔。Sample 列预设为文本，以保留前导零。
+- 已有样本名、原始 Ct 和已填写登记不会被覆盖。同孔冲突会提示并保留原值；缺失样本名的测量仍可审计，但补全前不合并成匿名样本计算 CN。
+- 点击“保存本次登记”可同时保存已应用的样本映射。导出的“原始Ct”包含仪器原样本名与补录来源。
+
+支持的格式、匹配规则与验收说明见 [板布局补录与精简审查](docs/plate-layout-import.md)。
+
 ## 核心防错逻辑
 
 - **Reference assay ≠ Reference sample**：RNase P 等内参 assay 用于孔内归一化；已知 CN 的 calibrator 用于板内相对定量。
@@ -94,7 +104,16 @@ npm run test:release
 - `tests/fixtures/quantstudio-32well-deidentified.xlsx`：仓库内可携带、去标识的默认回放文件。
 - `tests/template.integration.test.js`：通过 fixture ingest seam 验证真实文件结构。
 - `tests/diagnostics.test.js`：验证稳定的诊断 code/params interface 与中文展示 adapter。
+- `tests/layout.test.js`：验证板布局/粘贴/模板映射、补空不覆盖、登记匹配、来源追溯以及补录前后计算一致性。
 - `tests/release-sync.test.js`：验证单一发布资产清单、离线 HTML 依赖和 Sites 发布副本同步。
+
+可选真实浏览器验收（需要可用的 Playwright 与 Chromium，不增加应用运行依赖）：
+
+```bash
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright node scripts/verify-layout-ui.mjs
+```
+
+脚本使用合成数据检查桌面/手机端的导入、补录、保存恢复、校准、人工复核、模板下载、XLSX 回读及打印。加 `--screenshots` 保存界面截图。
 
 默认测试不依赖个人电脑路径。需要额外回放某个真实实验导出文件时，可显式提供：
 
@@ -106,7 +125,7 @@ CNV_TEMPLATE_XLS=/absolute/path/to/template.xls npm run test:integration
 
 ## 单一源码与发布
 
-根目录中的 `cnvtool.html`、`styles.css`、`diagnostics.js`、`app.js`、`core.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。发布资产清单只在 `scripts/release-assets.mjs` 维护；不要直接修改 `sites-app/public` 中的同名发布副本。
+根目录中的 `cnvtool.html`、`styles.css`、`diagnostics.js`、`app.js`、`core.js`、`layout.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。发布资产清单只在 `scripts/release-assets.mjs` 维护；不要直接修改 `sites-app/public` 中的同名发布副本。
 
 修改主源码后，同步网页版发布文件：
 
