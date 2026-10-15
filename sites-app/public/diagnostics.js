@@ -126,7 +126,7 @@
       POPULATION_EXPECTED_MODE_INVALID: function () { return "预期众数拷贝数必须为正整数；0-copy 不参与对数模型拟合。"; },
       POPULATION_NO_NONZERO_SAMPLES: function () { return "没有可用的非零拷贝样本。"; },
       POPULATION_MODEL_FIT_FAILED: function () { return "无法在给定的众数拷贝数下拟合群体模型。"; },
-      POPULATION_APPROXIMATION: function () { return "该结果为公开原理的透明近似，不保证与 CopyCaller 官方软件逐值一致。"; },
+      POPULATION_APPROXIMATION: function () { return "使用预期众数 CN 的群体拟合近似进行校准。"; },
       CALIBRATION_MODE_UNSUPPORTED: function () { return "不支持的校准方式：" + p.mode; },
       QUALITY_GROUP_SIZE_INSUFFICIENT: function () { return "至少需要 " + p.minimum + " 个相同拷贝数的样本；当前最大类别仅 " + p.largestGroup + " 个。"; },
       QUALITY_MODEL_TRANSPARENT_APPROXIMATION: function () { return "透明高斯后验估计，未实施 CopyCaller 的 bootstrap 5% 下限。"; },

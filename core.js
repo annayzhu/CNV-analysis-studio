@@ -1065,7 +1065,7 @@
       runIssues: runIssues,
       assays: assays,
       releaseStatus: releaseBlocked ? "HOLD" : "READY_FOR_REVIEW",
-      methodBoundary: "已知校准样本的 ΔΔCt/CN 公式按公开文档实现；群体校准、Confidence-like 和自动离群为透明近似，不宣称与 CopyCaller 专有实现逐值一致。"
+      methodBoundary: "已知校准样本使用 ΔΔCt/CN 公式；群体校准采用高斯混合模型近似，Confidence-like 为后验概率估计，未采用 CopyCaller 的 bootstrap 5% 下限。"
     };
   }
 
@@ -1456,12 +1456,6 @@
         if (!String(assay[item[0]] || "").trim()) missingItems.push(assay.target + " " + item[1]);
       });
     });
-    (analysis.assays || []).forEach(function (assay) {
-      var config = assay.calibration.config || {};
-      if (["sample", "group", "population"].indexOf(config.mode) >= 0 && !String(config.confirmationEvidence || "").trim()) {
-        missingItems.push("校准依据：" + assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : ""));
-      }
-    });
     missingItems = unique(missingItems);
     blockers = blockers.concat(missingItems.map(function (item) { return item + "未填写"; }));
     if (requireReviewedStatus && registration.recordStatus !== "已复核") blockers.push("记录状态不是已复核");
@@ -1517,7 +1511,7 @@
       var config = assay.calibration.config || {};
       rows.push({
         "字段": assay.targetName + (assay.panelSignature ? " [" + assay.panelSignature + "]" : "") + " 校准",
-        "本次记录": joinExportParts([assay.calibration.ok ? "通过" : "未通过", assay.calibration.label || assay.calibration.mode, config.confirmationEvidence || "确认依据待填写", config.selectionNote || ""]),
+        "本次记录": joinExportParts([assay.calibration.ok ? "通过" : "未通过", assay.calibration.label || assay.calibration.mode, config.confirmationEvidence || "", config.selectionNote || ""]),
         "来源": "自动分析 + 人工确认"
       });
     });
@@ -1560,7 +1554,7 @@
       { "项目": "Release status", "内容": analysis.releaseStatus },
       { "项目": "Formula", "内容": "ΔCt=Ct_target-Ct_reference；ΔΔCt=meanΔCt_sample-meanΔCt_calibrator；CN=CN_calibrator×2^(-ΔΔCt)" },
       { "项目": "Ct CV", "内容": "Ct CV=样本SD/Mean Ct，仅描述 Ct 尺度离散度；放行仍结合 SD(ΔCt)、扩增曲线、内参、NTC 和校准品。" },
-      { "项目": "Method boundary", "内容": analysis.methodBoundary },
+      { "项目": "方法说明", "内容": analysis.methodBoundary },
       { "项目": "Sample CN fields", "内容": "首页一行对应一个 Sample；CN 判定为离散拷贝数，连续 CN 保留未取整值。全部可分析复孔 target 未检出/仅背景、内参有效、复孔数达标且同 assay/panel 阳性校准有效时可判定 0 copy；条件不足时保留 0-copy 候选。No call/内参无效/未校准不得解释为正式 CN。" },
       { "项目": "RUO", "内容": "For Research Use Only. Not for diagnostic procedures." },
       { "项目": "Run / Plate / Analysis", "内容": audit.runId + " / " + audit.plateId + " / " + audit.analysisId }

@@ -17,7 +17,8 @@
     registrationSavedAt: "",
     registrationDirty: false,
     layoutDraft: null,
-    pendingLayout: null,
+    loadingInstrument: false,
+    loadingLayout: false,
     sampleAssignments: []
   };
 
@@ -57,11 +58,12 @@
     el.textContent = message;
     el.classList.add("is-visible");
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(function () { el.classList.remove("is-visible"); }, 2800);
+    toast.timer = setTimeout(function () { el.classList.remove("is-visible"); el.textContent = ""; }, 2800);
   }
 
   function setFileStatus(kind, text) {
     var el = $("#file-status");
+    el.hidden = !text;
     el.innerHTML = '<span class="status-dot status-dot--' + kind + '"></span><span>' + escapeHtml(text) + "</span>";
   }
 
@@ -323,12 +325,15 @@
   async function handleFile(file) {
     if (!file) return;
     var request = ++handleFile.request;
+    state.loadingInstrument = true;
+    updateStartControls();
     setFileStatus("loading", "正在本地解析 " + file.name + " …");
     try {
       var buffer = await file.arrayBuffer();
       var fingerprint = await computeFileFingerprint(buffer, file);
       if (request !== handleFile.request) return;
       var imported = parseWorkbook(buffer);
+      if (state.parsed) clearLayoutDraft();
       state.fileName = file.name;
       state.sheetName = imported.sheetName;
       state.fileFingerprint = fingerprint;
@@ -340,25 +345,86 @@
       state.settings = Object.assign({}, core.DEFAULTS, { calibrations: {} });
       initializeRegistration();
       var restored = restoreRegistrationRecord();
-      if (state.pendingLayout) {
-        applyLayout(state.pendingLayout, true);
-        state.pendingLayout = null;
-      }
-      runAnalysis();
-      setFileStatus("ok", file.name + " · 工作表 " + state.sheetName + " · 表头位于第 " + state.parsed.headerRow + " 行" + (restored ? " · 已恢复本机登记" : ""));
-      $("#workspace").classList.remove("is-hidden");
-      $("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
+      showImportStage();
+      $("#uploaded-file-name").textContent = file.name;
+      $("#uploaded-file-details").textContent = "已导入 · 工作表 " + state.sheetName + " · 表头位于第 " + state.parsed.headerRow + " 行" + (restored ? " · 已恢复本机登记" : "");
+      $("#uploaded-file").hidden = false;
+      $("#drop-zone").hidden = true;
+      setFileStatus("ok", "");
     } catch (error) {
       if (request !== handleFile.request) return;
       console.error(error);
       setFileStatus("error", error.message);
       toast("导入失败：" + error.message);
+    } finally {
+      if (request === handleFile.request) {
+        state.loadingInstrument = false;
+        updateStartControls();
+      }
     }
   }
   handleFile.request = 0;
 
+  function showImportStage() {
+    $("#workspace").classList.add("is-hidden");
+    $("#layout-import-section").hidden = false;
+    $("#layout-import-section").appendChild($("#layout-panel"));
+    $("#layout-panel").open = true;
+    $("#layout-apply").hidden = true;
+    $("#layout-template-format-label").hidden = !!state.parsed;
+    $("#layout-help").textContent = "按孔位导入样本名，并补入实验与试剂信息；选好后点击下方“开始分析”。";
+    $("#import-actions").hidden = false;
+    if (state.layoutDraft) renderLayoutPreview();
+  }
+
+  function removeInstrumentFile() {
+    handleFile.request += 1; // A pending replacement must not restore a removed file.
+    if (state.analysis) clearLayoutDraft();
+    state.fileName = state.fileFingerprint = state.sheetName = "";
+    state.parsed = state.analysis = state.registration = null;
+    state.registrationSavedAt = "";
+    state.registrationDirty = state.loadingInstrument = false;
+    state.sampleAssignments = [];
+    state.settings = Object.assign({}, core.DEFAULTS, { calibrations: {} });
+    $("#uploaded-file").hidden = true;
+    $("#uploaded-file-name").textContent = $("#uploaded-file-details").textContent = "";
+    $("#drop-zone").hidden = false;
+    showImportStage();
+    updateStartControls();
+    setFileStatus("idle", "已移除仪器文件，可重新选择。");
+    $("#drop-zone").focus({ preventScroll: true });
+  }
+
+  function updateStartControls() {
+    var loading = state.loadingInstrument || state.loadingLayout;
+    var needsPlate = state.layoutDraft && !selectedLayout();
+    $("#start-analysis").disabled = !state.parsed || loading || !!needsPlate;
+    $("#import-ready-status").textContent = loading ? "正在读取文件…" : !state.parsed ? "请先导入仪器结果，板布局可选。" : needsPlate ? "请选择对应的实验板，或移除板布局后直接分析。" : state.layoutDraft ? "已就绪，将使用所选板布局。" : "已就绪，可直接分析，也可先添加板布局。";
+  }
+
+  function startAnalysis() {
+    if ($("#start-analysis").disabled || state.analysis) return;
+    try {
+      var selected = selectedLayout();
+      if (selected && !applyLayout(selected, true)) return;
+      runAnalysis();
+      $("#import-actions").hidden = true;
+      $("#workspace").classList.remove("is-hidden");
+      $("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      toast("分析失败：" + error.message);
+    }
+  }
+
+  function clearLayoutDraft() {
+    state.layoutDraft = null;
+    $("#layout-preview").hidden = true;
+    layoutMessage("");
+    updateStartControls();
+  }
+
   function readLayoutWorkbook(input, source, type) {
-    var workbook = XLSX.read(input, { type: type, raw: true });
+    var workbook = XLSX.read(input, { type: type, raw: true, dateNF: "yyyy-mm-dd" });
     var parsed = layout.parseSheets(workbook.SheetNames.map(function (name) {
       return { name: name, rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, defval: "" }) };
     }));
@@ -384,6 +450,7 @@
 
   function renderLayoutPreview() {
     var selected = selectedLayout();
+    updateStartControls();
     $("#layout-apply").disabled = !selected;
     $("#layout-preview-table").innerHTML = "";
     $("#layout-preview-count").textContent = "";
@@ -391,6 +458,7 @@
     var rows = Object.entries(selected.plate.samples);
     var preview = state.parsed ? layout.applySamples(state.parsed.records, selected.plate, selected.source, true) : null;
     $("#layout-preview-count").textContent = preview ? "补入 " + preview.filledWells.length + " 孔 · 覆盖 " + preview.overwrittenWells.length + " 孔" + (preview.unmatchedWells.length ? " · 未匹配 " + preview.unmatchedWells.length + " 孔" : "") : rows.length + " 孔 · " + unique(rows.map(function (row) { return row[1]; })).length + " 个样本名";
+    if (!state.analysis && Object.keys(selected.registration).some(function (field) { return field === "assays" ? selected.registration.assays.length : selected.registration[field]; })) $("#layout-preview-count").textContent += " · 含实验登记信息";
     var currentNames = new Map();
     if (state.parsed) state.parsed.records.forEach(function (record) {
       if (!currentNames.has(record.wellPosition)) currentNames.set(record.wellPosition, new Set());
@@ -432,12 +500,7 @@
 
   function applyLayoutFromUi() {
     var selected = selectedLayout();
-    if (!selected) return;
-    if (!state.parsed) {
-      state.pendingLayout = selected;
-      layoutMessage("已选择 " + selected.plate.id + "，接下来导入仪器结果即可。");
-      return;
-    }
+    if (!selected || !state.analysis) return;
     syncRegistrationFromUi();
     if (applyLayout(selected, false)) runAnalysis();
   }
@@ -447,10 +510,16 @@
     var missing = unique(records.filter(function (r) { return !r.sampleName && r.sampleRole !== "NTC"; }).map(function (r) { return r.wellPosition; }));
     var filled = unique(records.filter(function (r) { return r.sampleNameSource; }).map(function (r) { return r.wellPosition; }));
     $("#sample-status").textContent = (filled.length ? "已更新 " : "当前识别到 ") + state.analysis.sampleCount + " 个样本" + (missing.length ? " · " + missing.length + " 个孔缺少样本名" : " · " + state.analysis.wellsUsed + " 孔");
-    $("#sample-section").appendChild($("#layout-panel"));
+    var panel = $("#layout-panel");
+    if (panel.parentElement !== $("#sample-section")) {
+      panel.open = false;
+      $("#sample-section").appendChild(panel);
+      $("#layout-import-section").hidden = true;
+    }
     $("#layout-summary").textContent = "更新样本信息";
     $("#layout-help").textContent = "按孔位导入样本名；覆盖已有名称时会请你确认。";
     $("#layout-template-format-label").hidden = true;
+    $("#layout-apply").hidden = false;
     $("#layout-apply").textContent = "更新样本并重新分析";
     if (state.layoutDraft && !$("#layout-preview").hidden) renderLayoutPreview();
   }
@@ -460,12 +529,18 @@
     var columns = count === 384 ? 24 : 12;
     var wells = state.parsed ? state.parsed.records.map(function (r) { return r.wellPosition; }) : Array.from({ length: count }, function (_, i) { return String.fromCharCode(65 + Math.floor(i / columns)) + (i % columns + 1); });
     var workbook = XLSX.utils.book_new();
-    var sheet = XLSX.utils.aoa_to_sheet(layout.templateRows(wells));
-    sheet["!cols"] = [{ wch: 12 }, { wch: 28 }];
-    // Excel must retain leading zeros when the user fills Sample cells.
-    for (var row = 1; row <= unique(wells).length; row += 1) sheet[XLSX.utils.encode_cell({ r: row, c: 1 })] = { t: "s", v: "", z: "@" };
-    XLSX.utils.book_append_sheet(workbook, sheet, "Samples");
-    XLSX.writeFile(workbook, "CNV_样本补录模板.xlsx");
+    layout.templateSheets(wells, state.registration ? state.registration.assays : []).forEach(function (definition) {
+      var sheet = XLSX.utils.aoa_to_sheet(definition.rows);
+      sheet["!cols"] = definition.widths.map(function (width) { return { wch: width }; });
+      // Text-formatted entry cells preserve sample IDs, catalogue numbers and dates as typed.
+      definition.rows.slice(1).forEach(function (row, index) {
+        row.forEach(function (value, column) {
+          sheet[XLSX.utils.encode_cell({ r: index + 1, c: column })] = { t: "s", v: String(value), z: "@" };
+        });
+      });
+      XLSX.utils.book_append_sheet(workbook, sheet, definition.name);
+    });
+    XLSX.writeFile(workbook, "CNV_板布局与实验登记模板.xlsx");
   }
 
   function runAnalysis() {
@@ -619,28 +694,28 @@
     }).join("");
     container.innerHTML =
       '<div class="ntc-setup__head"><div><h3>NTC 设置（可选）</h3><p>本次没有无模板对照（NTC）也可继续，无需补标或填写 NTC 依据。若实验中确有 NTC 但仪器漏标，可在这里补充；文件中已有的 NTC 标记始终保留。</p></div><span class="ntc-status ntc-status--' + statusClass + '">' + escapeHtml(statusText) + "</span></div>" +
-      '<div class="ntc-boundary"><strong>实验边界：</strong>这里只能修正遗漏的板位标记；如果本次实验实际上没有设置 NTC，分析软件不能事后补造 NTC。</div>' +
+      '<div class="ntc-note"><strong>填写说明：</strong>仅将本次实验中实际未加模板的孔标为 NTC。</div>' +
       '<div class="ntc-config-grid"><label class="ntc-field"><span>NTC 识别方式</span><select id="setting-ntc-mode">' +
       '<option value="auto"' + (mode === "auto" ? " selected" : "") + '>使用文件标记（允许无 NTC）</option>' +
       '<option value="manual_sample"' + (mode === "manual_sample" ? " selected" : "") + '>按样本名补标 NTC</option>' +
-      '<option value="manual_wells"' + (mode === "manual_wells" ? " selected" : "") + '>按物理孔位补标 NTC</option></select><small>按样本名会覆盖该名称对应的全部孔；按孔位会覆盖该孔的全部 multiplex 行。</small></label>' +
-      '<div><div id="ntc-sample-panel"' + (mode === "manual_sample" ? "" : " hidden") + '><span class="ntc-field"><span>选择实际未加模板的样本名</span></span><div class="ntc-candidates">' + (sampleRows || '<div class="qc-empty">没有可选样本。</div>') + "</div></div>" +
-      '<div id="ntc-well-panel"' + (mode === "manual_wells" ? "" : " hidden") + '><span class="ntc-field"><span>选择实际未加模板的物理孔</span></span><div class="ntc-candidates">' + (wellRows || '<div class="qc-empty">没有可选孔位。</div>') + "</div></div>" +
-      '<div id="ntc-auto-panel"' + (mode === "auto" ? "" : " hidden") + ' class="ntc-preview">自动模式不会新增 NTC，只使用样本名或 Task 中明确的 NTC / No Template 标记。</div></div></div>' +
+      '<option value="manual_wells"' + (mode === "manual_wells" ? " selected" : "") + '>按物理孔位补标 NTC</option></select><small id="ntc-mode-help">按样本名会覆盖该名称对应的全部孔；按孔位会覆盖该孔的全部 multiplex 行。</small></label>' +
+      '<div id="ntc-choice-panel"><div id="ntc-sample-panel" class="ntc-field"' + (mode === "manual_sample" ? "" : " hidden") + '><span>选择实际未加模板的样本名</span><div class="ntc-candidates">' + (sampleRows || '<div class="qc-empty">没有可选样本。</div>') + "</div></div>" +
+      '<div id="ntc-well-panel" class="ntc-field"' + (mode === "manual_wells" ? "" : " hidden") + '><span>选择实际未加模板的物理孔</span><div class="ntc-candidates">' + (wellRows || '<div class="qc-empty">没有可选孔位。</div>') + "</div></div></div>" +
       '<div id="ntc-manual-fields" class="ntc-manual-fields"' + (mode === "auto" ? " hidden" : "") + '><div id="ntc-selection-preview" class="ntc-preview"></div>' +
       '<label class="ntc-field"><span>指定依据（写入审计记录）</span><textarea id="setting-ntc-note" placeholder="例如：根据 2026-07-13 加样记录，H11/H12 未加入基因组 DNA。">' + escapeHtml(assignment.note || "") + "</textarea></label>" +
       '<label class="confirm-line ntc-confirm"><input id="setting-ntc-confirmed" type="checkbox"' + (assignment.confirmed ? " checked" : "") + '><span>我确认所选孔在本次实验中确实未加入模板 DNA；它们将从样本数、CN 结果、群体模型和校准候选中排除。</span></label></div>' +
-      '<div class="action-row"><button class="button button--primary" id="apply-ntc" type="button">应用 NTC 设置并重新分析</button><span id="ntc-message" class="inline-message"></span></div>';
+      '<div class="action-row"><button class="button button--primary" id="apply-ntc" type="button">应用 NTC 设置并重新分析</button><span id="ntc-message" class="inline-message"></span></div></div>';
 
     function updateNtcModeAndPreview() {
       var activeMode = $("#setting-ntc-mode").value;
       $("#ntc-sample-panel").hidden = activeMode !== "manual_sample";
       $("#ntc-well-panel").hidden = activeMode !== "manual_wells";
-      $("#ntc-auto-panel").hidden = activeMode !== "auto";
+      $("#ntc-choice-panel").hidden = activeMode === "auto";
+      $("#ntc-mode-help").hidden = activeMode === "auto";
       $("#ntc-manual-fields").hidden = activeMode === "auto";
+      $(".ntc-config-grid", container).classList.toggle("is-auto", activeMode === "auto");
       if (activeMode === "auto") {
         $("#apply-ntc").textContent = mode !== "auto" ? "清除人工补标并重新分析" : "按导入文件重新分析";
-        $("#ntc-auto-panel").textContent = "仅使用文件中的 NTC 标记；没有 NTC 时可直接继续分析。" + (mode !== "auto" ? "应用后将清除当前人工补标。" : "");
       } else {
         $("#apply-ntc").textContent = "确认补标 NTC 并重新分析";
       }
@@ -665,12 +740,12 @@
     function invalidateNtcConfirmation(message, clearNote) {
       $("#setting-ntc-confirmed").checked = false;
       if (clearNote) $("#setting-ntc-note").value = "";
-      $("#ntc-message").textContent = message || "NTC 选择已改变，请重新核对并确认。";
+      $("#ntc-message").textContent = message;
       updateNtcModeAndPreview();
     }
 
     $("#setting-ntc-mode").addEventListener("change", function () {
-      invalidateNtcConfirmation(this.value === "auto" ? "允许无 NTC，无需填写依据；点击下方按钮应用。" : "NTC 指定方式已改变，请重新选择、填写依据并确认。", true);
+      invalidateNtcConfirmation(this.value === "auto" ? "" : "NTC 指定方式已改变，请重新选择、填写依据并确认。", true);
     });
     $all(".ntc-sample-choice, .ntc-well-choice").forEach(function (input) {
       input.addEventListener("change", function () { invalidateNtcConfirmation("NTC 选择已改变，请重新核对并确认。", false); });
@@ -710,8 +785,7 @@
     if (changed) state.settings.calibrations = {};
     markRegistrationDirty({ invalidateApproval: true });
     runAnalysis();
-    $("#ntc-message").textContent = manual ? "人工 NTC 已应用；请复核 NTC 扩增检查。" + (changed ? " 原校准设置已清空。" : "") : "已恢复为仅使用导入文件中的 NTC 标记。" + (changed ? " 原校准设置已清空。" : "");
-    toast(manual ? "NTC 设置已记录并重新分析。" : "人工 NTC 设置已清除。");
+    toast((manual ? "NTC 设置已记录并重新分析。" : "已使用导入文件中的 NTC 标记。") + (changed ? " 原校准设置已清空。" : ""));
   }
 
   function calibrationModePanel(mode, active, html) {
@@ -736,12 +810,11 @@
           '<span class="candidate-badge ' + (candidate.eligible ? "candidate-badge--ok" : "candidate-badge--no") + '">' + (candidate.eligible ? "可选" : "禁止") + "</span></label>";
       }).join("");
       var notices = [];
-      (assay.calibration.warnings || []).forEach(function (warning) { notices.push('<div class="guard-message guard-message--warning">' + escapeHtml(diagnostics.format(warning)) + "</div>"); });
+      (assay.calibration.warnings || []).filter(function (warning) { return warning.code !== "POPULATION_APPROXIMATION"; }).forEach(function (warning) { notices.push('<div class="guard-message guard-message--warning">' + escapeHtml(diagnostics.format(warning)) + "</div>"); });
       (assay.calibration.errors || []).forEach(function (error) { notices.push('<div class="guard-message guard-message--error">' + escapeHtml(diagnostics.format(error)) + "</div>"); });
-      if (assay.calibration.ok) notices.push('<div class="guard-message guard-message--ok">校准已锁定：' + escapeHtml(assay.calibration.label) + "</div>");
       var samplePanel = '<div class="calibration-fields"><label class="calibration-field"><span>校准样本</span><select class="cal-sample"><option value="">请选择…</option>' + candidateOptions + '</select></label><label class="calibration-field"><span>已知 CN</span><input class="cal-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.copyNumber || 2) + '"></label></div><label class="confirm-line"><input class="cal-confirmed" type="checkbox"' + (config.independentlyConfirmed ? " checked" : "") + '><span>我确认该样本对当前 target / panel 的拷贝数已由独立方法或可追溯记录确认。</span></label>';
       var groupPanel = '<label class="calibration-field"><span>选择同一已知 CN 的校准组</span><div class="candidate-list">' + candidateRows + '</div></label><div class="calibration-fields"><label class="calibration-field"><span>该组已知 CN</span><input class="cal-group-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.copyNumber || 2) + '"></label></div><label class="confirm-line"><input class="cal-group-confirmed" type="checkbox"' + (config.independentlyConfirmed ? " checked" : "") + '><span>我确认所选样本具有相同、已知且独立确认的拷贝数。</span></label>';
-      var populationPanel = '<div class="calibration-fields"><label class="calibration-field"><span>预期最常见的非零 CN</span><input class="cal-mode-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.expectedMostFrequentCopyNumber || 2) + '"></label></div><div class="guard-message guard-message--warning">只有在没有合格已知校准品、非零样本数充足，且预期众数 CN 有研究设计依据时才应人工选择。该模式为透明近似，不保证与 CopyCaller 专有实现逐值一致，也不会自动作为失败校准品的替代。</div>';
+      var populationPanel = '<div class="calibration-fields"><label class="calibration-field"><span>预期最常见的非零 CN</span><input class="cal-mode-cn" type="number" min="1" max="20" step="1" value="' + escapeAttr(config.expectedMostFrequentCopyNumber || 2) + '"></label></div><p class="inline-message">用于没有合格已知校准品时；需有足够的非零样本，并根据实验设计确定预期最常见 CN。</p>';
       return '<article class="calibration-card" data-assay-key="' + escapeAttr(assay.key) + '">' +
         '<div class="calibration-card__head"><h3>' + escapeHtml(assay.targetName) + "</h3><p>" + escapeHtml(assay.panelSignature || "合并所有反应组合") + " · reporter " + escapeHtml(assay.reporters.join("/")) + " · 样本 " + assay.results.length + "</p></div>" +
         '<div class="calibration-card__body">' + notices.join("") +
@@ -753,8 +826,8 @@
         calibrationModePanel("sample", mode === "sample", samplePanel) +
         calibrationModePanel("group", mode === "group", groupPanel) +
         calibrationModePanel("population", mode === "population", populationPanel) +
-        '<div class="calibration-audit-fields"><label class="calibration-field"><span>确认依据 / 记录编号</span><input class="cal-evidence" value="' + escapeAttr(config.confirmationEvidence || "") + '" placeholder="例如 WGS 报告编号；群体模式填写众数假设依据"></label>' +
-        '<label class="calibration-field"><span>选择备注 / 替换原因</span><input class="cal-selection-note" value="' + escapeAttr(config.selectionNote || "") + '" placeholder="例如主校准品内参失败，改用已确认的备用样本"></label></div>' +
+        '<div class="calibration-audit-fields"><label class="calibration-field"><span>确认依据 / 记录编号（选填）</span><input class="cal-evidence" value="' + escapeAttr(config.confirmationEvidence || "") + '" placeholder="可留空，如 WGS 报告编号"></label>' +
+        '<label class="calibration-field"><span>选择备注 / 替换原因（选填）</span><input class="cal-selection-note" value="' + escapeAttr(config.selectionNote || "") + '" placeholder="可留空，如改用备用校准样本"></label></div>' +
         "</div></article>";
     }).join("");
     $all(".cal-mode", container).forEach(function (select) {
@@ -1106,7 +1179,7 @@
       "<li>允许没有 NTC：不单独阻止分析、导出或人工放行，也无需填写额外 NTC 依据。系统自动保留 warning 与未设置 NTC 的审计记录；无法据此排除污染。</li>" +
       "<li>NTC 的 target 或内参任一通道出现数值 Ct 都会触发 blocker，并保留孔位、target 与 Ct 审计信息。</li>" +
       (ntc.assignment && ntc.assignment.note ? "<li>人工指定依据：" + escapeHtml(ntc.assignment.note) + "</li>" : "") + "</ul></div>" +
-      '<div class="method-box"><h3>Confidence-like 与 |Z-score| 边界</h3><p>' + escapeHtml(a.methodBoundary) + '</p><ul>' + confidenceNotes + '</ul></div>' +
+      '<div class="method-box"><h3>Confidence-like 与 |Z-score| 指标说明</h3><p>' + escapeHtml(a.methodBoundary) + '</p><ul>' + confidenceNotes + '</ul></div>' +
       '<div class="method-box"><h3>当前板的解释限制</h3><ul>' +
       "<li>使用 " + a.wellsUsed + "/" + a.plateCapacity + " 个物理孔，" + a.sampleCount + " 个非 NTC 样本；行数不等于物理孔数，multiplex 每个 target 占一行。</li>" +
       "<li>文档建议每样本 4 复孔；当前设置的最低可分析复孔数为 " + state.settings.minReplicates + "。</li>" +
@@ -1125,8 +1198,7 @@
     if (previousSplit !== state.settings.splitPanels) state.settings.calibrations = {};
     markRegistrationDirty({ invalidateApproval: true });
     runAnalysis();
-    $("#settings-message").textContent = previousSplit !== state.settings.splitPanels ? "反应组合层级已变更，原校准设置已清空。" : "参数已应用。";
-    toast("已重新分析孔级和样本级结果。");
+    toast(previousSplit !== state.settings.splitPanels ? "反应组合已变更并重新分析，原校准设置已清空。" : "参数已应用，结果已更新。");
   }
 
   function collectCalibrationSettings() {
@@ -1154,8 +1226,7 @@
     markRegistrationDirty({ invalidateApproval: true });
     runAnalysis();
     var invalid = state.analysis.assays.filter(function (assay) { return !assay.calibration.ok; }).length;
-    $("#calibration-message").textContent = invalid ? invalid + " 个 assay 仍未通过校准检查，数值 CN 保持停止。" : "所有 assay 校准已锁定，请继续人工复核 QC。";
-    toast(invalid ? "部分校准设置被防错规则拦截。" : "校准设置已应用。");
+    toast(invalid ? "部分校准设置尚未通过检查。" : "校准已锁定：" + state.analysis.assays.map(function (assay) { return assay.targetName + " · " + assay.calibration.label; }).join("；"));
   }
 
   function jsonSheet(rows, headers) {
@@ -1218,35 +1289,52 @@
 
   function bindEvents() {
     var layoutReadId = 0;
+    $all("[data-layout-source]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        if (button.getAttribute("aria-pressed") === "true") return;
+        $all("[data-layout-source]").forEach(function (choice) { choice.setAttribute("aria-pressed", String(choice === button)); });
+        $("#layout-file-controls").hidden = button.dataset.layoutSource !== "file";
+        $("#layout-paste-controls").hidden = button.dataset.layoutSource !== "paste";
+        layoutReadId += 1;
+        state.loadingLayout = false;
+        clearLayoutDraft();
+      });
+    });
     $("#layout-file").addEventListener("change", async function () {
       var file = this.files[0];
       if (!file) return;
       var request = ++layoutReadId;
-      state.layoutDraft = null;
-      state.pendingLayout = null;
-      $("#layout-preview").hidden = true;
+      state.loadingLayout = true;
+      clearLayoutDraft();
       layoutMessage("正在读取板布局…");
       try {
         var buffer = await file.arrayBuffer();
         if (request === layoutReadId) readLayoutWorkbook(buffer, file.name, "array");
       } catch (error) { if (request === layoutReadId) layoutMessage(error.message, true); }
+      finally {
+        if (request === layoutReadId) {
+          state.loadingLayout = false;
+          updateStartControls();
+        }
+      }
       this.value = "";
     });
     $("#layout-read-paste").addEventListener("click", function () {
       layoutReadId += 1;
-      state.layoutDraft = null;
-      state.pendingLayout = null;
-      $("#layout-preview").hidden = true;
+      state.loadingLayout = false;
+      clearLayoutDraft();
       try { readLayoutWorkbook($("#layout-paste").value, "粘贴表格", "string"); }
       catch (error) { layoutMessage(error.message, true); }
     });
     $("#layout-plate").addEventListener("change", renderLayoutPreview);
+    $("#layout-clear").addEventListener("click", clearLayoutDraft);
     $("#layout-apply").addEventListener("click", applyLayoutFromUi);
+    $("#start-analysis").addEventListener("click", startAnalysis);
     $("#layout-template").addEventListener("click", downloadLayoutTemplate);
     $("#supplement-layout").addEventListener("click", function () {
       var panel = $("#layout-panel");
       panel.open = !panel.open;
-      if (panel.open) $("#layout-file").focus({ preventScroll: true });
+      if (panel.open) $('.layout-source-choice[aria-pressed="true"]').focus({ preventScroll: true });
     });
     $("#layout-panel").addEventListener("toggle", function () {
       $("#supplement-layout").setAttribute("aria-expanded", String(this.open));
@@ -1254,7 +1342,16 @@
     });
     var input = $("#file-input");
     input.addEventListener("change", function () { handleFile(input.files[0]); input.value = ""; });
+    $("#replace-file").addEventListener("click", function () { input.click(); });
+    $("#remove-file").addEventListener("click", function () {
+      if (state.analysis) {
+        layoutReadId += 1;
+        state.loadingLayout = false;
+      }
+      removeInstrumentFile();
+    });
     var drop = $("#drop-zone");
+    drop.addEventListener("click", function () { input.click(); });
     ["dragenter", "dragover"].forEach(function (eventName) {
       drop.addEventListener(eventName, function (event) { event.preventDefault(); drop.classList.add("is-dragging"); });
     });

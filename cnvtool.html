@@ -27,7 +27,7 @@
   </header>
 
   <main class="shell">
-    <section class="notice notice--ruo" aria-label="使用边界">
+    <section class="notice notice--ruo" aria-label="使用说明">
       <strong>仅供科研使用（RUO）</strong>
       <span>本工具用于透明复算与研究性判读，不用于诊断、治疗选择或个体临床决策。</span>
     </section>
@@ -41,37 +41,74 @@
         </div>
       </div>
 
-      <label class="drop-zone" id="drop-zone" for="file-input">
-        <input id="file-input" type="file" accept=".xls,.xlsx,.csv,.txt,.tsv" hidden>
+      <input id="file-input" type="file" accept=".xls,.xlsx,.csv,.txt,.tsv" aria-label="选择仪器结果文件" hidden>
+      <button class="drop-zone" id="drop-zone" type="button">
         <span class="drop-zone__icon" aria-hidden="true">↑</span>
         <span class="drop-zone__title">将文件拖到这里，或点击选择</span>
         <span class="drop-zone__hint">原始文件只在当前页面内解析，不会被修改。</span>
-      </label>
+      </button>
+
+      <div class="uploaded-file" id="uploaded-file" hidden>
+        <div class="uploaded-file__info" role="status">
+          <strong id="uploaded-file-name"></strong>
+          <span id="uploaded-file-details"></span>
+        </div>
+        <div class="uploaded-file__actions">
+          <button id="replace-file" class="button button--quiet" type="button">重新选择</button>
+          <button id="remove-file" class="button button--quiet" type="button">移除文件</button>
+        </div>
+      </div>
 
       <div class="file-status" id="file-status" role="status">
         <span class="status-dot status-dot--idle"></span>
         <span>尚未导入数据</span>
       </div>
-      <details id="layout-panel" class="layout-panel">
+    </section>
+
+    <section class="step-card layout-import-section" id="layout-import-section" aria-labelledby="layout-heading">
+      <div class="section-heading section-heading--layout">
+        <span class="step-number step-number--optional">可选</span>
+        <h2 id="layout-heading">添加板布局</h2>
+      </div>
+      <details id="layout-panel" class="layout-panel" open>
         <summary id="layout-summary">添加板布局（可选）</summary>
-        <p id="layout-help">按孔位导入样本名，并补入文件中的实验与试剂信息。覆盖已有样本名时会请你确认。</p>
-        <div class="layout-actions">
-          <label class="button button--quiet layout-file-label">上传板布局 / 已填模板<input id="layout-file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt"></label>
-          <label id="layout-template-format-label">模板板型<select id="layout-template-format"><option value="384">384 孔</option><option value="96">96 孔</option></select></label>
-          <button id="layout-template" class="button button--quiet" type="button">下载空白模板</button>
+        <div class="layout-toolbar">
+          <div class="layout-source-switch" role="group" aria-label="样本信息录入方式">
+            <button type="button" class="layout-source-choice" data-layout-source="file" aria-pressed="true" aria-controls="layout-file-controls">上传表格</button>
+            <button type="button" class="layout-source-choice" data-layout-source="paste" aria-pressed="false" aria-controls="layout-paste-controls">粘贴表格</button>
+          </div>
+          <div id="layout-file-controls">
+            <label class="button button--quiet layout-file-label">选择布局文件<input id="layout-file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" aria-label="上传板布局或已填模板"></label>
+          </div>
+          <div class="layout-template-controls">
+            <label id="layout-template-format-label">板型<select id="layout-template-format"><option value="384">384 孔</option><option value="96">96 孔</option></select></label>
+            <button id="layout-template" class="button button--quiet" type="button">下载空白模板</button>
+          </div>
         </div>
-        <label class="layout-paste-label" for="layout-paste">或粘贴 Excel 的 Well / Sample 两列（可含表头）</label>
-        <textarea id="layout-paste" rows="3" spellcheck="false" placeholder="Well&#9;Sample&#10;A1&#9;样本001&#10;A2&#9;样本001"></textarea>
-        <button id="layout-read-paste" class="button button--quiet" type="button">读取粘贴内容</button>
+        <p id="layout-help">支持板布局文件或已填模板；按孔位导入样本名，并补入实验与试剂信息。覆盖已有名称时会请你确认。</p>
+        <div id="layout-paste-controls" class="layout-paste-controls" hidden>
+          <textarea id="layout-paste" aria-label="粘贴 Excel 的 Well / Sample 两列（可含表头）" rows="3" spellcheck="false" placeholder="粘贴 Excel 的 Well / Sample 两列（可含表头）&#10;A1&#9;样本001&#10;A2&#9;样本001"></textarea>
+          <button id="layout-read-paste" class="button button--quiet" type="button">读取粘贴内容</button>
+        </div>
         <div id="layout-preview" class="layout-preview" hidden>
-          <label>对应实验板<select id="layout-plate"></select></label>
-          <p id="layout-preview-count" role="status"></p>
+          <div class="layout-preview__toolbar">
+            <label class="layout-plate-field"><span>实验板</span><select id="layout-plate"></select></label>
+            <p id="layout-preview-count" role="status"></p>
+            <div class="layout-preview__actions">
+              <button id="layout-clear" class="button button--quiet" type="button">移除板布局</button>
+              <button id="layout-apply" class="button button--primary" type="button" disabled hidden>更新样本并重新分析</button>
+            </div>
+          </div>
           <div id="layout-preview-table" class="table-wrap"></div>
-          <button id="layout-apply" class="button button--primary" type="button" disabled>使用此板布局</button>
         </div>
         <p id="layout-message" class="layout-message" role="status"></p>
       </details>
     </section>
+
+    <div id="import-actions" class="import-actions">
+      <p id="import-ready-status" role="status">请先导入仪器结果，板布局可选。</p>
+      <button id="start-analysis" class="button button--primary" type="button" disabled>开始分析</button>
+    </div>
 
     <div id="workspace" class="workspace is-hidden">
       <section class="summary-strip" aria-label="导入摘要">
@@ -83,7 +120,7 @@
       </section>
 
       <section id="sample-section" class="sample-section" aria-label="样本信息">
-        <div class="sample-section__heading"><div><h2>样本信息</h2><p id="sample-status"></p></div><button id="supplement-layout" class="button button--quiet" type="button" aria-controls="layout-panel" aria-expanded="false">更新样本信息</button></div>
+        <div class="sample-section__heading"><div class="sample-section__summary"><h2>样本信息</h2><p id="sample-status"></p></div><button id="supplement-layout" class="button button--quiet" type="button" aria-controls="layout-panel" aria-expanded="false">更新样本信息</button></div>
       </section>
 
       <nav class="workflow-nav" aria-label="分析导航">
@@ -140,7 +177,7 @@
           <label>
             <span>最少有效复孔</span>
             <input id="setting-min-reps" type="number" min="2" max="12" step="1" value="2">
-            <small>文档推荐 4 复孔；少于此值直接 No call。</small>
+            <small>推荐 4 复孔。</small>
           </label>
           <label>
             <span>复孔 ΔCt SD 预警值</span>
@@ -158,7 +195,6 @@
         </div>
         <div class="action-row">
           <button class="button button--primary" id="apply-settings" type="button">应用参数并重新分析</button>
-          <span id="settings-message" class="inline-message"></span>
         </div>
       </section>
 
@@ -166,7 +202,7 @@
         <div class="section-heading">
           <span class="step-number">04</span>
           <div>
-            <h2>按 assay 配置校准</h2>
+            <h2>按 assay 校准</h2>
             <p>仪器文件中的 Reference Sample 不会自动继承。主校准品不合格时，改选已独立确认 CN 且本板通过资格检查的备用校准品或校准组。</p>
           </div>
         </div>
@@ -177,7 +213,6 @@
         <div id="calibration-cards" class="calibration-grid"></div>
         <div class="action-row action-row--sticky">
           <button class="button button--primary" id="apply-calibration" type="button">锁定校准设置并计算</button>
-          <span class="inline-message" id="calibration-message"></span>
         </div>
       </section>
 
@@ -264,7 +299,7 @@
           <button class="result-tab" data-tab="dctplot" type="button">ΔCt 分布</button>
           <button class="result-tab" data-tab="plate" type="button">孔板图</button>
           <button class="result-tab" data-tab="wells" type="button">孔级审计</button>
-          <button class="result-tab" data-tab="method" type="button">方法边界</button>
+          <button class="result-tab" data-tab="method" type="button">方法说明</button>
         </div>
 
         <div class="tab-panel is-active" data-panel="summary">

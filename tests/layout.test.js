@@ -147,3 +147,35 @@ test("planner registration fills available blanks without guessing reagents or o
   assert.equal(partialResult.assays[0].lot, "Lot-01");
   assert.equal(partialResult.assays[0].assayId, "");
 });
+
+test("registration template round-trips experiment and assay fields without importing approval", () => {
+  const layout = require("../layout.js");
+  const XLSX = require("../vendor/xlsx.full.min.js");
+  const sheets = layout.templateSheets(["A1", "A2"], [{ target: "GSTM1", reporter: "FAM" }]);
+  assert.deepEqual(sheets.map(s => s.name), ["Samples", "Run Summary", "Assay & Dyes", "填写说明"]);
+  sheets[0].rows[1][1] = "00123";
+  sheets[0].rows[2][1] = "00123";
+  const supplied = {
+    plateId: "P01", experimentDate: "2026/10/14", operator: "Technician", reactionVolume: "10",
+    protocolVersion: "SOP-1", masterMixName: "TaqMan mix", masterMixBrand: "Vendor",
+    masterMixCatalog: "000123", masterMixLot: "000456", masterMixExpiry: "2027/03/31",
+    reviewer: "Reviewer", reviewDate: "2026-10-15", reviewNote: "Check controls", notes: "Experiment note",
+  };
+  const values = Object.values(supplied);
+  assert.equal(sheets[1].rows.length, values.length + 1);
+  sheets[1].rows.slice(1).forEach((row, index) => { row[1] = values[index]; });
+  sheets[1].rows.push(["最终结论", "同意放行"], ["记录状态", "已复核"]);
+  sheets[2].rows[1] = ["GSTM1", "FAM", "Hs-001", "Assay vendor", "000789", "20X", "NFQ-MGB"];
+  const book = XLSX.utils.book_new();
+  sheets.forEach(s => XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(s.rows), s.name));
+  const readback = XLSX.read(XLSX.write(book, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  const parsed = layout.parseSheets(readback.SheetNames.map(name => ({ name, rows: XLSX.utils.sheet_to_json(readback.Sheets[name], { header: 1, raw: false, defval: "" }) })));
+  assert.equal(parsed.plates[0].samples.A1, "00123");
+  const result = layout.fillRegistration({ operator: "Already recorded", assays: [{ target: "GSTM1", reporter: "FAM" }], recordStatus: "草稿", finalDecision: "待复核" }, parsed.registration, "template.xlsx");
+  assert.deepEqual(Object.fromEntries(Object.keys(supplied).map(field => [field, result[field]])), {
+    ...supplied, operator: "Already recorded", experimentDate: "2026-10-14", masterMixExpiry: "2027-03-31", reactionVolume: "10 µL",
+  });
+  assert.deepEqual(result.assays[0], { target: "GSTM1", reporter: "FAM", assayId: "Hs-001", brand: "Assay vendor", lot: "000789", concentration: "20X", quencher: "NFQ-MGB" });
+  assert.equal(result.recordStatus, "草稿");
+  assert.equal(result.finalDecision, "待复核");
+});

@@ -13,22 +13,24 @@
   }
 
   var REGISTRATION_FIELDS = {
-    plateId: ["Plate ID", "板号"], experimentDate: ["Experiment date", "实验日期"],
-    operator: ["Operator", "操作人"], reactionVolume: ["Reaction volume", "反应体积", "每孔总体积", "总反应体积"],
-    protocolVersion: ["Protocol", "SOP version", "Protocol / SOP 版本"],
-    masterMixName: ["Master Mix name", "Master Mix 名称"], masterMixBrand: ["Master Mix brand", "Master Mix 品牌"],
-    masterMixCatalog: ["Master Mix Cat.", "Master Mix catalog", "Master Mix 货号"],
-    masterMixLot: ["Master Mix lot", "Master Mix 批号"], masterMixExpiry: ["Master Mix expiry", "Master Mix 有效期"]
+    plateId: ["板号 / Plate ID", "Plate ID", "板号"], experimentDate: ["实验日期 / Experiment date", "Experiment date", "实验日期"],
+    operator: ["操作人 / Operator", "Operator", "操作人"], reactionVolume: ["反应体积 (µL)", "Reaction volume", "反应体积", "每孔总体积", "总反应体积"],
+    protocolVersion: ["Protocol / SOP 版本", "Protocol", "SOP version", "SOP 版本"],
+    masterMixName: ["Master Mix 名称", "Master Mix name"], masterMixBrand: ["Master Mix 品牌", "Master Mix brand"],
+    masterMixCatalog: ["Master Mix 货号", "Master Mix Cat.", "Master Mix catalog"],
+    masterMixLot: ["Master Mix 批号", "Master Mix lot"], masterMixExpiry: ["Master Mix 有效期", "Master Mix expiry"],
+    reviewer: ["复核人 / Reviewer", "Reviewer", "复核人"], reviewDate: ["复核日期 / Review date", "Review date", "复核日期"],
+    reviewNote: ["复核说明", "Review note"], notes: ["实验备注 / Notes", "Notes", "实验备注", "实验 / 分析备注"]
   };
   var ASSAY_FIELDS = {
-    target: ["Assay name", "Target", "Target name", "靶标"], reporter: ["Reporter"],
-    assayId: ["Assay ID"], brand: ["Brand", "品牌"], lot: ["Lot", "批号"],
-    concentration: ["Concentration", "浓度"], quencher: ["Quencher"]
+    target: ["Assay name / 靶标", "Assay name", "Target", "Target name", "靶标"], reporter: ["Reporter"],
+    assayId: ["Assay ID"], brand: ["品牌 / Brand", "Brand", "品牌"], lot: ["批号 / Lot", "Lot", "批号"],
+    concentration: ["浓度 / Concentration", "Concentration", "浓度"], quencher: ["Quencher"]
   };
 
   function matches(value, aliases) {
     var label = key(text(value).split("/")[0].replace(/[（(].*$/, ""));
-    return aliases.some(function (alias) { return key(alias) === label; });
+    return aliases.some(function (alias) { return key(alias.split("/")[0].replace(/[（(].*$/, "")) === label; });
   }
 
   function readRegistration(sheets) {
@@ -56,7 +58,7 @@
       });
     });
     if (registration.reactionVolume && /^\d+(\.\d+)?$/.test(registration.reactionVolume)) registration.reactionVolume += " µL";
-    ["experimentDate", "masterMixExpiry"].forEach(function (field) {
+    ["experimentDate", "masterMixExpiry", "reviewDate"].forEach(function (field) {
       var match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(registration[field]);
       if (match) registration[field] = match[1] + "-" + match[2].padStart(2, "0") + "-" + match[3].padStart(2, "0");
       else delete registration[field];
@@ -128,6 +130,26 @@
     return [["Well", "Sample"]].concat(Array.from(new Set(wells), function (well) { return [well, ""]; }));
   }
 
+  function templateSheets(wells, assays) {
+    var assayFields = Object.keys(ASSAY_FIELDS);
+    return [
+      { name: "Samples", rows: templateRows(wells), widths: [12, 28] },
+      { name: "Run Summary", rows: [["字段 / Field", "填写内容 / Value"]].concat(Object.keys(REGISTRATION_FIELDS).map(function (field) { return [REGISTRATION_FIELDS[field][0], ""]; })), widths: [36, 52] },
+      { name: "Assay & Dyes", rows: [assayFields.map(function (field) { return ASSAY_FIELDS[field][0]; })].concat((assays && assays.length ? assays : [{}, {}, {}]).map(function (assay) {
+        return assayFields.map(function (field) { return field === "target" || field === "reporter" ? text(assay[field]) : ""; });
+      })), widths: [24, 16, 24, 24, 22, 22, 20] },
+      { name: "填写说明", widths: [24, 100], rows: [
+        ["工作表", "填写方式"],
+        ["Samples", "填写 Well / Sample 两列；样本编号按文本保存，可保留前导零。未使用的孔可留空。"],
+        ["Run Summary", "填写本次实验的板号、日期、操作人、反应体积、SOP、Master Mix 和复核信息；无信息可留空。日期使用 YYYY-MM-DD。"],
+        ["Assay & Dyes", "每行一个靶标/Reporter 组合；名称与仪器结果一致。可填写品牌、Assay ID、批号、浓度和 Quencher。"],
+        ["第一步导入", "点击“开始分析”后，样本信息按孔位应用，实验与试剂信息自动补入登记空白项。"],
+        ["分析后补录", "在“样本信息”中导入本模板时，只更新样本和孔位，不修改实验登记。"],
+        ["记录与复核", "Run ID、Analysis ID、仪器参数和 CN 结果由软件生成；记录状态及最终结论在分析后人工确认。"],
+      ] }
+    ];
+  }
+
   function fillRegistration(current, supplied, source) {
     var result = Object.assign({}, current);
     var imported = [];
@@ -152,5 +174,5 @@
     return result;
   }
 
-  return { parseSheets: parseSheets, applySamples: applySamples, templateRows: templateRows, fillRegistration: fillRegistration };
+  return { parseSheets: parseSheets, applySamples: applySamples, templateRows: templateRows, templateSheets: templateSheets, fillRegistration: fillRegistration };
 });
