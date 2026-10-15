@@ -99,7 +99,7 @@ try {
 
 - 所有计算均在当前浏览器本地完成，实验数据不会上传服务器。
 - “保存本次登记”保存在当前电脑的当前浏览器中；换电脑、换浏览器或清除浏览器数据后不会自动同步。
-- 请保持 cnvtool.html、diagnostics.js、app.js、core.js、styles.css 和 vendor 文件夹的相对位置不变。
+- 请保持 cnvtool.html、diagnostics.js、app.js、core.js、layout.js、styles.css 和 vendor 文件夹的相对位置不变。
 - 本工具仅供科研使用（RUO），不用于诊断、治疗选择或个体临床决策。
 - 压缩包不包含任何样本数据或实验结果。
 

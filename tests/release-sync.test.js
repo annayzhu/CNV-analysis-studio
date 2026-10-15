@@ -12,7 +12,6 @@ test("the release manifest covers every local browser dependency", async () => {
   const localReferences = Array.from(html.matchAll(/(?:src|href)="((?!https?:|\/|#)[^"]+)"/g), (match) => match[1]);
   const browserSources = BROWSER_ASSETS.map((asset) => asset.source);
 
-  assert.deepEqual(browserSources, ["styles.css", "diagnostics.js", "core.js", "app.js", "vendor/xlsx.full.min.js"]);
   assert.deepEqual(localReferences.sort(), browserSources.slice().sort());
   assert.ok(OFFLINE_PACKAGE_ASSETS.includes("cnvtool.html"));
   assert.ok(browserSources.every((source) => OFFLINE_PACKAGE_ASSETS.includes(source)));

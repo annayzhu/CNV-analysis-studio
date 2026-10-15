@@ -1,5 +1,5 @@
 export const OFFLINE_ENTRY_COMMENT =
-  "<!-- 本地离线入口：请与 styles.css、diagnostics.js、app.js、core.js 和 vendor 文件夹一起使用。 -->\n";
+  "<!-- 本地离线入口：请与 styles.css、diagnostics.js、app.js、core.js、layout.js 和 vendor 文件夹一起使用。 -->\n";
 
 export const DESCRIPTION_META =
   '  <meta name="description" content="基于 CopyCaller 公开原理的 qPCR CNV 分析工具">\n';
@@ -17,6 +17,7 @@ export const BROWSER_ASSETS = Object.freeze([
   Object.freeze({ source: "styles.css", siteTarget: "sites-app/public/styles.css" }),
   Object.freeze({ source: "diagnostics.js", siteTarget: "sites-app/public/diagnostics.js" }),
   Object.freeze({ source: "core.js", siteTarget: "sites-app/public/core.js" }),
+  Object.freeze({ source: "layout.js", siteTarget: "sites-app/public/layout.js" }),
   Object.freeze({ source: "app.js", siteTarget: "sites-app/public/app.js" }),
   Object.freeze({ source: "vendor/xlsx.full.min.js", siteTarget: "sites-app/public/vendor/xlsx.full.min.js" }),
 ]);

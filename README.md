@@ -7,8 +7,8 @@
 ## 最快使用方法
 
 1. macOS 双击 `打开CNV分析器.command`，或用 Chrome / Edge / Safari 打开 `cnvtool.html`。
-2. 拖入原始仪器导出文件。不要在 Excel 中重排、删列或修改 Ct 后再导入。
-3. 先看“运行与数据质控”。`HOLD`表示可查看数据，但不应放行研究结果。
+2. 拖入原始仪器导出文件；此时只读取文件，不自动计算或跳转。可继续上传板布局、选择对应板，也可跳过板布局。
+3. 点击“开始分析”，再看“运行与数据质控”。`HOLD`表示可查看数据，但不应放行研究结果。
 4. 检查 NTC：若实验中真实设置了 NTC、但 plate setup 漏标，可按样本名或物理孔补标；必须填写依据并确认。
 5. 确认内参 assay、内参 Ct 阈值、0-copy ΔCt 阈值、最少复孔数及 duplex/triplex 是否分开。
 6. 按 target / panel 独立配置校准。仪器文件中的 `Reference Sample` 不会自动继承。
@@ -17,12 +17,24 @@
 
 所有数据仅在当前浏览器页面中处理，不会上传到服务器。整个应用可以直接部署到任何静态站点。
 
+## 板布局与缺失样本名
+
+- **开始分析前（可选）**：仪器结果与板布局的导入顺序不限。在独立的“添加板布局”区域上传 CNV 布局工作簿并选择对应板，最后统一点击“开始分析”，不用另点应用。程序按孔位更新样本名，并将可匹配的实验/试剂信息补入登记空白项；覆盖已有名称会先确认。也可不提供布局直接分析，或点击“移除板布局”撤下已选文件。
+- **开始分析后**：在“样本信息”点击“更新样本信息”，选择“上传表格”或“粘贴表格”。上传布局表/已填模板，或粘贴 Excel 的 `Well` / `Sample` 两列后，选板、核对预览并应用。此入口只更新样本与孔位，不修改实验登记。
+- **下载模板**：分析前可选 96/384 孔；分析后模板只列出本次导入的物理孔。Sample 列预设为文本，以保留前导零。
+- 已有样本名与新布局不同时，先显示当前/导入名称，确认后覆盖，取消则不变；顶部样本数同步重算。原始 Ct、仪器样本名与已填写登记不变。全板同名只显示识别到的样本数，不标为“信息完整”。
+- 覆盖样本名后重新选择校准样本；原文件 NTC 标记仍保留，手动按样本名指定的 NTC 固定到原物理孔，不随改名迁移。
+- 点击“保存本次登记”可同时保存已应用的样本映射。导出的“原始Ct”包含仪器原样本名与补录来源。
+
+支持的格式、匹配规则与验收说明见 [板布局补录与精简审查](docs/plate-layout-import.md)。
+
 ## 核心防错逻辑
 
 - **Reference assay ≠ Reference sample**：RNase P 等内参 assay 用于孔内归一化；已知 CN 的 calibrator 用于板内相对定量。
 - **不继承仪器中的 Reference Sample**：只显示原运行设置，每个 target / panel 重新审查。
 - **校准品资格硬限制**：内参必须有效，target 必须稳定非零扩增，有效复孔数必须足够，ΔCt SD 不能超过校准品限值。
 - **已知 CN 需人工签认**：未勾选“已由独立依据确认”时，程序不计算连续 CN。
+- **校准依据与备注选填**：不填写文字依据、记录编号或替换备注，不影响 CN 计算、登记完整度或人工放行；填写的内容仍保存并导出。校准资格、已知 CN 与上述人工确认仍需满足。
 - **内参失败优先**：内参无效的样本是 `Invalid`，不会因 target 也是 Undetermined 而被误判为 0 copy。
 - **0-copy 独立路径**：全部可分析复孔内参有效、target 均为 Undetermined/仅背景、复孔数达标且同 assay/panel 阳性校准有效时，输出正式 `CN=0`；缺少阳性校准或证据复孔不足时保留 `0-copy 候选`，部分复孔扩增、部分不扩增时输出 `No call`。
 - **不静默删数据**：源 flags、自动离群、手工 Omit 与排除理由都保留到孔级审计表。
@@ -31,14 +43,16 @@
 - **人工 NTC 双重确认**：补标 NTC 时必须选择现有样本或物理孔、填写实验依据并确认“实际未加入模板”；原样本名不会被覆盖。
 - **NTC 不参与 CN 计算**：已确认 NTC 从样本数、样本结果、校准候选和群体模型中排除，但完整保留在孔级审计中。
 - **NTC 扩增硬拦截**：NTC 的 target 或内参任一通道出现数值 Ct 都会产生 blocker，提示污染、非特异扩增或误标风险。
-- **NTC 覆盖检查**：未识别 NTC，或某个 duplex/triplex 反应组合没有对应 NTC 时，记为 warning，不再单独触发 `HOLD`；但必须人工记录无法排除污染的局限。
+- **允许没有 NTC**：未识别 NTC，或某个 duplex/triplex 反应组合没有对应 NTC 时，只保留 warning 与审计记录，不单独阻止分析、导出或人工放行，也不要求额外填写 NTC 依据。其他质控、校准及登记条件仍需满足；没有 NTC 不能据此排除污染。
 - **不能补造实验对照**：如果实验中没有实际设置 NTC，软件不能事后把普通孔解释成 NTC。
+
+仪器 flags 的计数单位是“孔 × 靶标测量记录”，不是物理孔或样本；同一条记录可以有多个标记。THOLDFAIL 表示自动阈值识别失败，CQCONF 表示 Cq 置信度低于设置值，NOAMP 表示未检出扩增，EXPFAIL 表示未识别到扩增曲线的指数期。定义见 [Thermo Fisher 官方 QC flags 说明](https://apps.thermofisher.com/apps/help/MAN0010414/GUID-3B54F97E-F149-4026-B61F-6AF6A0F07C4D.html)。
 
 ## 批量板的校准品失败策略
 
 - `Reference assay`（例如 RNase P）是每个样本孔内归一化的内参；若它在某样本失败，该样本为 `Invalid`，不能通过更换校准品挽救。
 - `Reference Sample / calibrator` 是已知 CN 的板内校准样本。批量板应为每个 target / panel 预设主校准品和至少 1 个已独立确认 CN 的备用校准品，并尽量在各板使用同一批次桥接 DNA。
-- 主校准品本板不合格时，改选本板通过资格检查的备用校准品，或使用至少 2 个同 CN 已知样本构成校准组，并记录替换原因。
+- 主校准品本板不合格时，改选本板通过资格检查的备用校准品，或使用至少 2 个同 CN 已知样本构成校准组；替换原因可选填。
 - 所有已知校准品都失败时，不会从普通样本中自动挑选替代品。只有在非零样本数足够且“预期众数 CN”有先验依据时，才可人工切换到群体模式；否则该 assay / 板保持 `HOLD / No call`。
 
 ## 一体化实验工作簿
@@ -53,9 +67,9 @@ XLSX 只生成一个文件，共 11 张工作表；首页用于直接登记 Samp
 - `原始Ct`：逐条保留仪器导入记录，包括内参行、源 Ct/ΔCt/ΔΔCt/RQ、threshold、baseline、Cq confidence、flags 和 Omit。
 - `NTC审计`：NTC 来源、人工指定依据、各通道 Ct 与扩增结论；无 NTC 时仍固定保留表头。
 - `校准记录`：每个 target/panel 的模式、所选样本/组、已知 CN、确认依据、替换原因、K、错误和警告。
-- `分析参数`、`仪器元数据`、`方法说明`：保留复算所需的阈值、来源和方法边界。
+- `分析参数`、`仪器元数据`、`方法说明`：保留复算所需的阈值、来源和方法适用范围。
 
-每个主要明细表都带有稳定的 `Run ID`、`Plate ID` 和 `Analysis ID`，便于未来汇总 96/384 孔及多板实验。“保存本次登记”会优先按原始文件内容的 SHA-256 摘要，将本次登记、NTC、分析参数及校准设置保存在当前浏览器；重新导入同一内容时自动恢复，不上传服务器。浏览器不支持内容摘要时才退回文件名、大小和修改时间。常用操作人、反应体积、品牌、货号和 Assay ID 可作为本机预设，但批号与有效期不跨板复用。自动质控为 `HOLD`、登记/校准依据不完整，或缺少复核人和复核日期时，软件不会允许选择“同意放行”；放行后若再改变参数、NTC、校准或登记信息，原签认会自动撤销并要求重新复核。
+每个主要明细表都带有稳定的 `Run ID`、`Plate ID` 和 `Analysis ID`，便于未来汇总 96/384 孔及多板实验。“保存本次登记”会优先按原始文件内容的 SHA-256 摘要，将本次登记、NTC、分析参数及校准设置保存在当前浏览器；重新导入同一内容时自动恢复，不上传服务器。浏览器不支持内容摘要时才退回文件名、大小和修改时间。常用操作人、反应体积、品牌、货号和 Assay ID 可作为本机预设，但批号与有效期不跨板复用。自动质控为 `HOLD`、必填登记不完整，或缺少复核人和复核日期时，软件不会允许选择“同意放行”；校准文字依据和备注不属于必填项。放行后若再改变参数、NTC、校准或登记信息，原签认会自动撤销并要求重新复核。
 
 ## 96 / 384 孔扩展
 
@@ -84,7 +98,7 @@ npm run test:integration
 npm run test:release
 ```
 
-测试覆盖：ΔΔCt 主公式、0-copy 校准品拦截、内参失败不误判、duplex/triplex 分层、自动/人工 NTC、未确认 NTC 拦截、NTC 扩增、校准冲突、一体化工作簿字段顺序与原始 Ct 完整性、样本数不足时不伪造 Confidence/|Z|、QuantStudio 重名 Cq Conf 列解析、384 孔边界，以及去标识的 32 孔 QuantStudio fixture 回放。
+测试覆盖：ΔΔCt 主公式、0-copy 校准品拦截、内参失败不误判、duplex/triplex 分层、自动/人工 NTC、未确认 NTC 拦截、NTC 扩增、校准冲突、一体化工作簿字段顺序与原始 Ct 完整性、样本数不足时不伪造 Confidence/|Z|、QuantStudio 重名 Cq Conf 列解析、384 孔范围检查，以及去标识的 32 孔 QuantStudio fixture 回放。
 
 ### 测试结构
 
@@ -94,7 +108,16 @@ npm run test:release
 - `tests/fixtures/quantstudio-32well-deidentified.xlsx`：仓库内可携带、去标识的默认回放文件。
 - `tests/template.integration.test.js`：通过 fixture ingest seam 验证真实文件结构。
 - `tests/diagnostics.test.js`：验证稳定的诊断 code/params interface 与中文展示 adapter。
+- `tests/layout.test.js`：验证板布局/粘贴/模板映射、补空不覆盖、登记匹配、来源追溯以及补录前后计算一致性。
 - `tests/release-sync.test.js`：验证单一发布资产清单、离线 HTML 依赖和 Sites 发布副本同步。
+
+可选真实浏览器验收（需要可用的 Playwright 与 Chromium，不增加应用运行依赖）：
+
+```bash
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright node scripts/verify-layout-ui.mjs
+```
+
+脚本使用合成数据检查桌面/手机端的导入、补录、保存恢复、校准、人工复核、模板下载、XLSX 回读及打印。加 `--screenshots` 保存界面截图。
 
 默认测试不依赖个人电脑路径。需要额外回放某个真实实验导出文件时，可显式提供：
 
@@ -106,7 +129,7 @@ CNV_TEMPLATE_XLS=/absolute/path/to/template.xls npm run test:integration
 
 ## 单一源码与发布
 
-根目录中的 `cnvtool.html`、`styles.css`、`diagnostics.js`、`app.js`、`core.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。发布资产清单只在 `scripts/release-assets.mjs` 维护；不要直接修改 `sites-app/public` 中的同名发布副本。
+根目录中的 `cnvtool.html`、`styles.css`、`diagnostics.js`、`app.js`、`core.js`、`layout.js` 和 `vendor/xlsx.full.min.js` 是唯一可信源码。发布资产清单只在 `scripts/release-assets.mjs` 维护；不要直接修改 `sites-app/public` 中的同名发布副本。
 
 修改主源码后，同步网页版发布文件：
 
@@ -140,6 +163,6 @@ npm run test:sites
 
 ## 方法文档
 
-- [CopyCaller 计算原理与实现边界](docs/CopyCaller_计算原理与实现边界.md)
+- [CopyCaller 计算原理与方法说明](docs/CopyCaller_计算原理与方法说明.md)
 - [当前 32 孔模板回放与防错报告](docs/当前模板回放与防错报告.md)
 - [当前架构与演进原则](docs/ARCHITECTURE.md)

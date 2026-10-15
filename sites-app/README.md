@@ -8,7 +8,7 @@
 node scripts/sync-release-assets.mjs
 ```
 
-## 隐私与运行边界
+## 隐私与运行说明
 
 - Excel/CSV 数据在用户浏览器内解析，分析器不上传实验文件。
 - 所有计算、质控、NTC 补标和导出均由前端 JavaScript 完成。

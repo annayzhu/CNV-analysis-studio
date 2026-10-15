@@ -147,6 +147,41 @@ test("registration review is the single source for missing fields and approval",
   assert.equal(review.canApprove, false);
 });
 
+test("optional calibration evidence and notes do not block calculation, registration or export", () => {
+  const samples = Array.from({ length: 8 }, (_, i) => ({
+    name: "S" + (i + 1), startWell: i * 2 + 1,
+    targetCts: i === 7 ? [26, 26] : [25, 25], referenceCts: [25, 25],
+  }));
+  const registration = {
+    plateId: "P-1", experimentDate: "2026-10-14", operator: "Operator",
+    reactionVolume: "10 µL", protocolVersion: "SOP-1", recordStatus: "已复核",
+    masterMixBrand: "Vendor", masterMixCatalog: "CAT", masterMixLot: "LOT", masterMixExpiry: "2027-01-01",
+    reviewer: "Reviewer", reviewDate: "2026-10-14", finalDecision: "同意放行", assays: [],
+  };
+  for (const config of [
+    { mode: "sample", sampleName: "S1", copyNumber: 2, independentlyConfirmed: true },
+    { mode: "group", sampleNames: ["S1", "S2"], copyNumber: 2, independentlyConfirmed: true },
+    { mode: "population", expectedMostFrequentCopyNumber: 2 },
+  ]) {
+    const run = (calibration) => runScenario({ samples, settings: { splitPanels: false, calibrations: { TARGET: calibration } } });
+    const blank = run({ ...config, confirmationEvidence: "", selectionNote: "" });
+    const documented = run({ ...config, confirmationEvidence: "Record-1", selectionNote: "Optional note" });
+    assert.equal(blank.assay().calibration.ok, true, config.mode);
+    assert.deepEqual(blank.assay().results, documented.assay().results, "text fields do not change CN or QC");
+    assert.deepEqual(core.reviewRegistration(blank.analysis, registration, true).blockers, []);
+    assert.equal(core.reviewRegistration(blank.analysis, registration, true).canApprove, true);
+    const workbook = blank.workbook({ registration });
+    assert.equal(workbook.sheet("校准记录").rows[0]["确认依据/记录编号"], "");
+    assert.equal(workbook.sheet("校准记录").rows[0]["选择备注/替换原因"], "");
+    const rows = workbook.sheet("运行登记").rows;
+    assert.doesNotMatch(rows.find((row) => row["字段"].endsWith(" 校准"))["本次记录"], /待填写/);
+    assert.equal(rows.find((row) => row["字段"] === "人工复核结论")["本次记录"], "同意放行");
+  }
+  const unconfirmed = runScenario({ samples, settings: { splitPanels: false, calibrations: { TARGET: { mode: "sample", sampleName: "S1", copyNumber: 2 } } } });
+  assert.equal(unconfirmed.assay().calibration.ok, false);
+  assert.equal(unconfirmed.result("S8").calculatedCopyNumber, null);
+});
+
 test("automatic Ct threshold is accepted and threshold values may differ from 0.2", () => {
   const samples = [{ name: "S1", startWell: 1, targetCts: [25, 25], referenceCts: [25, 25] }];
   const automatic = runScenario({
@@ -194,6 +229,9 @@ test("an incomplete or unreviewed record cannot be exported as approved for rele
   workbook = scenario.workbook({ registration });
   decision = workbook.sheet("运行登记").rows.find((row) => row["字段"] === "人工复核结论")["本次记录"];
   assert.equal(decision, "同意放行");
+  assert.equal(scenario.analysis.ntcSummary.detected, false);
+  assert.equal(core.reviewRegistration(scenario.analysis, registration, true).canApprove, true);
+  assert.deepEqual(core.reviewRegistration(scenario.analysis, registration, true).blockers, []);
   registration.approvalInvalidated = true;
   workbook = scenario.workbook({ registration });
   decision = workbook.sheet("运行登记").rows.find((row) => row["字段"] === "人工复核结论")["本次记录"];
