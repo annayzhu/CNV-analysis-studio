@@ -245,7 +245,11 @@ try {
     assert.equal(raw[0]["样本名来源"], "planner.xlsx / P01");
     assert.equal(raw[0].Ct, 25);
     // A replacement instrument file returns to preparation, without reusing a previous run's layout.
-    await upload(page, "#file-input", instrument, "second-run.xlsx");
+    // A different filename alone is still the same saved file (content fingerprint).
+    const secondInstrument = workbook({ Results: [["Experiment Name", "Second run"], ["Well", "Sample", "Target", "Reporter", "CT"], ...wells.flatMap((well, i) => [
+      [well, "", "GSTM1", "FAM", i < 2 ? 25 : 26], [well, "", "RNaseP", "VIC", 25],
+    ])] });
+    await upload(page, "#file-input", secondInstrument, "second-run.xlsx");
     await page.waitForFunction(() => !document.querySelector("#start-analysis").disabled);
     assert.equal(await page.locator("#layout-preview").isHidden(), true);
     await beginAnalysis(page);

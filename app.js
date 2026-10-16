@@ -6,6 +6,12 @@
   var layout = window.CopyNumberLayout;
   var REGISTRATION_STORAGE_KEY = "cnv-analysis-registration-presets-v1";
   var REGISTRATION_RECORDS_STORAGE_KEY = "cnv-analysis-registration-records-v1";
+  var LAST_SESSION_STORAGE_KEY = "cnv-analysis-last-session-v1";
+  var REAGENT_BATCHES_STORAGE_KEY = "cnv-analysis-reagent-batches-v1";
+  var registrationSaveTimer;
+  var selectedBatchIds = {};
+  var MIX_BATCH_FIELDS = ["masterMixName", "masterMixBrand", "masterMixCatalog", "masterMixLot", "masterMixExpiry"];
+  var ASSAY_BATCH_FIELDS = ["brand", "assayId", "lot", "concentration", "quencher"];
   var state = {
     fileName: "",
     fileFingerprint: "",
@@ -16,6 +22,7 @@
     registration: null,
     registrationSavedAt: "",
     registrationDirty: false,
+    registrationSaveError: false,
     layoutDraft: null,
     loadingInstrument: false,
     loadingLayout: false,
@@ -147,6 +154,7 @@
       state.settings.ntcAssignment = saved.settings.ntcAssignment || core.DEFAULTS.ntcAssignment;
     }
     state.sampleAssignments = saved.sampleAssignments || [];
+    selectedBatchIds = saved.selectedBatchIds || {};
     state.sampleAssignments.forEach(function (assignment) {
       var restoredSamples = layout.applySamples(state.parsed.records, assignment.plate, assignment.source, assignment.overwriteExisting === true);
       state.parsed.records = restoredSamples.records;
@@ -160,7 +168,7 @@
     var status = $("#record-save-status");
     if (!status) return;
     if (state.registrationDirty) {
-      status.textContent = "有未保存更改";
+      status.textContent = state.registrationSaveError ? "本机保存失败，请导出 XLSX 保留记录。" : "正在保存…";
       status.className = "record-save-status record-save-status--dirty";
       return;
     }
@@ -195,8 +203,22 @@
   function markRegistrationDirty(options) {
     if (!state.registration) return;
     if (options && options.invalidateApproval) invalidateApproval(options);
+    scheduleRegistrationSave();
+  }
+
+  function scheduleRegistrationSave() {
+    clearTimeout(registrationSaveTimer);
+    if (!state.registration) return;
     state.registrationDirty = true;
+    state.registrationSaveError = false;
     updateRegistrationSaveStatus();
+    if (state.analysis) registrationSaveTimer = setTimeout(function () { saveCurrentRegistrationRecord(false); }, 350);
+  }
+
+  function clearSessionRecovery() {
+    clearTimeout(registrationSaveTimer);
+    try { localStorage.removeItem(LAST_SESSION_STORAGE_KEY); }
+    catch (error) { toast("无法清除浏览器中的上次记录，请检查浏览器存储设置。"); }
   }
 
   function fallbackFileFingerprint(file) {
@@ -212,31 +234,154 @@
     }).catch(function () { return fallback; });
   }
 
-  function saveCurrentRegistrationRecord() {
+  function saveCurrentRegistrationRecord(notify) {
     if (!state.registration || !state.analysis) return;
+    clearTimeout(registrationSaveTimer);
     syncRegistrationFromUi();
     var records = loadRegistrationRecords();
     var savedAt = new Date().toISOString();
-    records[currentRegistrationRecordKey()] = {
+    var record = {
       savedAt: savedAt,
       sourceFile: state.fileName,
       registration: state.registration,
       settings: state.settings,
-      sampleAssignments: state.sampleAssignments
+      sampleAssignments: state.sampleAssignments,
+      selectedBatchIds: selectedBatchIds
     };
+    records[currentRegistrationRecordKey()] = record;
     var orderedKeys = Object.keys(records).sort(function (a, b) {
       return String(records[b].savedAt || "").localeCompare(String(records[a].savedAt || ""));
     });
     orderedKeys.slice(20).forEach(function (key) { delete records[key]; });
     try {
       localStorage.setItem(REGISTRATION_RECORDS_STORAGE_KEY, JSON.stringify(records));
+      // Keep one input snapshot for refresh recovery; results are recalculated, not duplicated.
+      localStorage.setItem(LAST_SESSION_STORAGE_KEY, JSON.stringify(Object.assign({}, record, {
+        fileName: state.fileName, fileFingerprint: state.fileFingerprint, sheetName: state.sheetName,
+        parsed: state.parsed
+      })));
       state.registrationSavedAt = savedAt;
       state.registrationDirty = false;
+      state.registrationSaveError = false;
       updateRegistrationSaveStatus();
-      toast("本次登记与分析设置已保存到当前浏览器。");
+      if (notify) toast("本次登记与分析设置已保存到当前浏览器。");
     } catch (error) {
-      toast("本机保存失败；请直接导出 XLSX 保留记录。");
+      state.registrationDirty = state.registrationSaveError = true;
+      updateRegistrationSaveStatus();
+      if (notify) toast("本机保存失败；请直接导出 XLSX 保留记录。");
     }
+  }
+
+  function restoreLastSession() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(LAST_SESSION_STORAGE_KEY) || "null");
+      if (!saved || !saved.parsed || !saved.registration) return;
+      state.fileName = saved.fileName;
+      state.fileFingerprint = saved.fileFingerprint;
+      state.sheetName = saved.sheetName;
+      state.parsed = saved.parsed;
+      state.registration = saved.registration;
+      state.settings = Object.assign({}, core.DEFAULTS, saved.settings);
+      state.sampleAssignments = saved.sampleAssignments || [];
+      selectedBatchIds = saved.selectedBatchIds || {};
+      state.registrationSavedAt = saved.savedAt;
+      runAnalysis(false);
+      $("#uploaded-file-name").textContent = state.fileName;
+      $("#uploaded-file-details").textContent = "已恢复上次登记 · 工作表 " + state.sheetName;
+      $("#uploaded-file").hidden = false;
+      $("#drop-zone").hidden = true;
+      $("#import-actions").hidden = true;
+      $("#workspace").classList.remove("is-hidden");
+    } catch (error) {
+      toast("上次记录未能恢复，请重新导入仪器文件。");
+    }
+  }
+
+  function loadReagentBatches() {
+    try { return JSON.parse(localStorage.getItem(REAGENT_BATCHES_STORAGE_KEY) || "[]"); }
+    catch (error) { return []; }
+  }
+
+  function batchTarget(scope) {
+    return scope === "mix" ? state.registration : state.registration.assays.find(function (assay) { return assay.key === scope; });
+  }
+
+  function batchLabel(batch) {
+    var values = batch.values;
+    return batch.scope === "mix" ? values.masterMixLot + (values.masterMixName ? " · " + values.masterMixName : "") : values.lot + (values.assayId ? " · " + values.assayId : "");
+  }
+
+  function renderBatchControls() {
+    var batches = loadReagentBatches();
+    $all(".batch-controls").forEach(function (controls) {
+      var scope = controls.dataset.batchScope;
+      var selected = selectedBatchIds[scope] || "";
+      var available = batches.filter(function (batch) { return batch.scope === scope; });
+      if (!available.some(function (batch) { return batch.id === selected; })) selected = "";
+      selectedBatchIds[scope] = selected;
+      var label = scope === "mix" ? "Master Mix" : batchTarget(scope).target;
+      controls.innerHTML = '<select aria-label="' + escapeAttr(label + " 已存批次") + '"><option value="">新批次（填写后保存）</option>' + available.map(function (batch) {
+        return '<option value="' + escapeAttr(batch.id) + '"' + (batch.id === selected ? " selected" : "") + '>' + escapeHtml(batchLabel(batch)) + '</option>';
+      }).join("") + '</select><button class="button button--quiet" type="button" data-batch-action="save">' + (selected ? "保存修改" : "保存批次") + '</button><button class="button button--text" type="button" data-batch-action="delete"' + (selected ? "" : " disabled") + '>删除</button>';
+    });
+  }
+
+  function applyReagentBatch(controls) {
+    var scope = controls.dataset.batchScope;
+    var id = $("select", controls).value;
+    selectedBatchIds[scope] = id;
+    if (!id) { renderBatchControls(); scheduleRegistrationSave(); return; }
+    var batch = loadReagentBatches().find(function (item) { return item.scope === scope && item.id === id; });
+    if (!batch) return;
+    syncRegistrationFromUi();
+    // Copy only reagent fields: a reusable batch never contains review or release decisions.
+    var fields = scope === "mix" ? MIX_BATCH_FIELDS : ASSAY_BATCH_FIELDS;
+    var target = batchTarget(scope);
+    var changed = fields.some(function (field) { return (target[field] || "") !== (batch.values[field] || ""); });
+    fields.forEach(function (field) { target[field] = batch.values[field] || ""; });
+    markRegistrationDirty({ invalidateApproval: changed });
+    renderRegistration();
+  }
+
+  function saveReagentBatch(controls) {
+    syncRegistrationFromUi();
+    var scope = controls.dataset.batchScope;
+    var target = batchTarget(scope);
+    var lotField = scope === "mix" ? "masterMixLot" : "lot";
+    if (!target[lotField]) { toast("请先填写批号，再保存试剂批次。"); return; }
+    var batches = loadReagentBatches();
+    var id = selectedBatchIds[scope] || Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    if (batches.some(function (batch) { return batch.scope === scope && batch.values[lotField] === target[lotField] && batch.id !== id; })) {
+      toast("该批号已保存，请从列表中选择后编辑。");
+      return;
+    }
+    var values = {};
+    (scope === "mix" ? MIX_BATCH_FIELDS : ASSAY_BATCH_FIELDS).forEach(function (field) { values[field] = target[field] || ""; });
+    var index = batches.findIndex(function (batch) { return batch.id === id; });
+    var entry = { id: id, scope: scope, values: values };
+    if (index < 0) batches.push(entry);
+    else batches[index] = entry;
+    try {
+      localStorage.setItem(REAGENT_BATCHES_STORAGE_KEY, JSON.stringify(batches));
+      selectedBatchIds[scope] = id;
+      renderBatchControls();
+      scheduleRegistrationSave();
+      toast("试剂批次已保存。");
+    } catch (error) { toast("试剂批次保存失败，请检查浏览器存储空间。"); }
+  }
+
+  function deleteReagentBatch(controls) {
+    var scope = controls.dataset.batchScope;
+    var batches = loadReagentBatches();
+    var batch = batches.find(function (item) { return item.id === selectedBatchIds[scope]; });
+    if (!batch || !window.confirm("删除已保存的批次“" + batchLabel(batch) + "”？当前实验登记中的试剂信息不会删除。")) return;
+    try {
+      localStorage.setItem(REAGENT_BATCHES_STORAGE_KEY, JSON.stringify(batches.filter(function (item) { return item.id !== batch.id; })));
+      delete selectedBatchIds[scope];
+      renderBatchControls();
+      scheduleRegistrationSave();
+      toast("已从批次列表删除。");
+    } catch (error) { toast("删除失败，请检查浏览器存储设置。"); }
   }
 
   function metadataValue(metadata, key) {
@@ -246,13 +391,9 @@
     return found ? metadata[found] : "";
   }
 
-  function inferExperimentDate(metadata, fileName) {
-    var source = String(metadataValue(metadata, "Date Created") || fileName || "");
-    var match = source.match(/(20\d{2})[-_/](\d{2})[-_/](\d{2})/);
-    if (match) return match[1] + "-" + match[2] + "-" + match[3];
-    match = source.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
-    if (match) return match[1] + "-" + match[2] + "-" + match[3];
-    return "";
+  function todayDate() {
+    var date = new Date();
+    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
   }
 
   function createAnalysisId(runId) {
@@ -284,7 +425,7 @@
       runId: runId,
       plateId: "",
       analysisId: createAnalysisId(runId),
-      experimentDate: inferExperimentDate(metadata, state.fileName),
+      experimentDate: "",
       operator: presets.operator || "",
       reactionVolume: presets.reactionVolume || "",
       protocolVersion: presets.protocolVersion || "",
@@ -333,6 +474,8 @@
       var fingerprint = await computeFileFingerprint(buffer, file);
       if (request !== handleFile.request) return;
       var imported = parseWorkbook(buffer);
+      if (state.registrationDirty) saveCurrentRegistrationRecord(false);
+      clearSessionRecovery();
       if (state.parsed) clearLayoutDraft();
       state.fileName = file.name;
       state.sheetName = imported.sheetName;
@@ -340,6 +483,7 @@
       state.parsed = imported.parsed;
       state.registrationSavedAt = "";
       state.registrationDirty = false;
+      selectedBatchIds = {};
       state.sampleAssignments = [];
       state.analysis = null;
       state.settings = Object.assign({}, core.DEFAULTS, { calibrations: {} });
@@ -379,6 +523,8 @@
 
   function removeInstrumentFile() {
     handleFile.request += 1; // A pending replacement must not restore a removed file.
+    if (state.registrationDirty) saveCurrentRegistrationRecord(false);
+    clearSessionRecovery();
     if (state.analysis) clearLayoutDraft();
     state.fileName = state.fileFingerprint = state.sheetName = "";
     state.parsed = state.analysis = state.registration = null;
@@ -407,6 +553,8 @@
     try {
       var selected = selectedLayout();
       if (selected && !applyLayout(selected, true)) return;
+      // A supplied layout or saved record takes precedence over the new-run default.
+      if (!state.registration.experimentDate) state.registration.experimentDate = todayDate();
       runAnalysis();
       $("#import-actions").hidden = true;
       $("#workspace").classList.remove("is-hidden");
@@ -543,11 +691,12 @@
     XLSX.writeFile(workbook, "CNV_板布局与实验登记模板.xlsx");
   }
 
-  function runAnalysis() {
+  function runAnalysis(save) {
     if (!state.parsed) return;
     state.analysis = core.analyze(state.parsed.records, state.parsed.metadata, state.settings);
     state.settings.referenceName = state.analysis.referenceName;
     renderAll();
+    if (save !== false) scheduleRegistrationSave();
   }
 
   function renderAll() {
@@ -927,15 +1076,18 @@
     updateFinalDecisionOptions();
     $("#record-assays").innerHTML = (r.assays || []).map(function (assay) {
       return '<div class="registration-assay-row" data-assay-key="' + escapeAttr(assay.key) + '">' +
-        '<div class="registration-assay-name"><strong>' + escapeHtml(assay.target) + '</strong><small>' + escapeHtml(assay.reporter || "Reporter 未记录") + '</small></div>' +
+        '<div class="reagent-heading"><div class="registration-assay-name"><strong>' + escapeHtml(assay.target) + '</strong><small>' + escapeHtml(assay.reporter || "Reporter 未记录") + '</small></div><div class="batch-controls" data-batch-scope="' + escapeAttr(assay.key) + '"></div></div>' +
+        '<div class="reagent-fields">' +
         '<label><span>品牌</span><input class="record-assay-brand" value="' + escapeAttr(assay.brand) + '" placeholder="品牌"></label>' +
         '<label><span>Assay ID</span><input class="record-assay-id" value="' + escapeAttr(assay.assayId) + '" placeholder="Assay ID"></label>' +
         '<label><span>批号</span><input class="record-assay-lot" value="' + escapeAttr(assay.lot) + '" placeholder="Lot"></label>' +
         '<label><span>浓度</span><input class="record-assay-concentration" value="' + escapeAttr(assay.concentration) + '" placeholder="例如 20X"></label>' +
         '<label><span>Quencher</span><input class="record-assay-quencher" value="' + escapeAttr(assay.quencher) + '" placeholder="Quencher"></label>' +
-        '</div>';
+        '</div></div>';
     }).join("");
+    renderBatchControls();
     $all("#record-section input, #record-section select, #record-section textarea").forEach(function (input) {
+      if (input.closest(".batch-controls")) return;
       if (input.tagName === "SELECT" || input.type === "date") input.onchange = handleRegistrationEdit;
       else input.oninput = handleRegistrationEdit;
     });
@@ -1361,7 +1513,18 @@
     drop.addEventListener("drop", function (event) { handleFile(event.dataTransfer.files[0]); });
     $("#apply-settings").addEventListener("click", applySettingsFromUi);
     $("#apply-calibration").addEventListener("click", collectCalibrationSettings);
-    $("#save-registration").addEventListener("click", saveCurrentRegistrationRecord);
+    $("#save-registration").addEventListener("click", function () { saveCurrentRegistrationRecord(true); });
+    $("#record-section").addEventListener("change", function (event) {
+      var controls = event.target.closest(".batch-controls");
+      if (controls && event.target.tagName === "SELECT") applyReagentBatch(controls);
+    });
+    $("#record-section").addEventListener("click", function (event) {
+      var button = event.target.closest("[data-batch-action]");
+      if (!button) return;
+      var controls = button.closest(".batch-controls");
+      if (button.dataset.batchAction === "save") saveReagentBatch(controls);
+      else deleteReagentBatch(controls);
+    });
     $("#toggle-metadata").addEventListener("click", function () { $("#metadata-panel").open = !$("#metadata-panel").open; });
     $all(".result-tab").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -1380,7 +1543,11 @@
     window.addEventListener("beforeprint", function () {
       if (state.analysis) Object.values(RESULT_RENDERERS).forEach(function (render) { render(); });
     });
+    window.addEventListener("pagehide", function () {
+      if (state.registrationDirty) saveCurrentRegistrationRecord(false);
+    });
   }
 
   bindEvents();
+  restoreLastSession();
 })();
