@@ -154,6 +154,7 @@
       state.settings.ntcAssignment = saved.settings.ntcAssignment || core.DEFAULTS.ntcAssignment;
     }
     state.sampleAssignments = saved.sampleAssignments || [];
+    selectedBatchIds = saved.selectedBatchIds || {};
     state.sampleAssignments.forEach(function (assignment) {
       var restoredSamples = layout.applySamples(state.parsed.records, assignment.plate, assignment.source, assignment.overwriteExisting === true);
       state.parsed.records = restoredSamples.records;
@@ -202,18 +203,16 @@
   function markRegistrationDirty(options) {
     if (!state.registration) return;
     if (options && options.invalidateApproval) invalidateApproval(options);
-    state.registrationDirty = true;
-    updateRegistrationSaveStatus();
     scheduleRegistrationSave();
   }
 
   function scheduleRegistrationSave() {
     clearTimeout(registrationSaveTimer);
-    if (!state.analysis) return;
+    if (!state.registration) return;
     state.registrationDirty = true;
     state.registrationSaveError = false;
     updateRegistrationSaveStatus();
-    registrationSaveTimer = setTimeout(function () { saveCurrentRegistrationRecord(false); }, 350);
+    if (state.analysis) registrationSaveTimer = setTimeout(function () { saveCurrentRegistrationRecord(false); }, 350);
   }
 
   function clearSessionRecovery() {
@@ -241,13 +240,15 @@
     syncRegistrationFromUi();
     var records = loadRegistrationRecords();
     var savedAt = new Date().toISOString();
-    records[currentRegistrationRecordKey()] = {
+    var record = {
       savedAt: savedAt,
       sourceFile: state.fileName,
       registration: state.registration,
       settings: state.settings,
-      sampleAssignments: state.sampleAssignments
+      sampleAssignments: state.sampleAssignments,
+      selectedBatchIds: selectedBatchIds
     };
+    records[currentRegistrationRecordKey()] = record;
     var orderedKeys = Object.keys(records).sort(function (a, b) {
       return String(records[b].savedAt || "").localeCompare(String(records[a].savedAt || ""));
     });
@@ -255,11 +256,10 @@
     try {
       localStorage.setItem(REGISTRATION_RECORDS_STORAGE_KEY, JSON.stringify(records));
       // Keep one input snapshot for refresh recovery; results are recalculated, not duplicated.
-      localStorage.setItem(LAST_SESSION_STORAGE_KEY, JSON.stringify({
+      localStorage.setItem(LAST_SESSION_STORAGE_KEY, JSON.stringify(Object.assign({}, record, {
         fileName: state.fileName, fileFingerprint: state.fileFingerprint, sheetName: state.sheetName,
-        parsed: state.parsed, savedAt: savedAt, registration: state.registration,
-        settings: state.settings, sampleAssignments: state.sampleAssignments
-      }));
+        parsed: state.parsed
+      })));
       state.registrationSavedAt = savedAt;
       state.registrationDirty = false;
       state.registrationSaveError = false;
@@ -283,6 +283,7 @@
       state.registration = saved.registration;
       state.settings = Object.assign({}, core.DEFAULTS, saved.settings);
       state.sampleAssignments = saved.sampleAssignments || [];
+      selectedBatchIds = saved.selectedBatchIds || {};
       state.registrationSavedAt = saved.savedAt;
       runAnalysis(false);
       $("#uploaded-file-name").textContent = state.fileName;
@@ -316,6 +317,8 @@
       var scope = controls.dataset.batchScope;
       var selected = selectedBatchIds[scope] || "";
       var available = batches.filter(function (batch) { return batch.scope === scope; });
+      if (!available.some(function (batch) { return batch.id === selected; })) selected = "";
+      selectedBatchIds[scope] = selected;
       var label = scope === "mix" ? "Master Mix" : batchTarget(scope).target;
       controls.innerHTML = '<select aria-label="' + escapeAttr(label + " 已存批次") + '"><option value="">新批次（填写后保存）</option>' + available.map(function (batch) {
         return '<option value="' + escapeAttr(batch.id) + '"' + (batch.id === selected ? " selected" : "") + '>' + escapeHtml(batchLabel(batch)) + '</option>';
@@ -327,15 +330,16 @@
     var scope = controls.dataset.batchScope;
     var id = $("select", controls).value;
     selectedBatchIds[scope] = id;
-    if (!id) { renderBatchControls(); return; }
+    if (!id) { renderBatchControls(); scheduleRegistrationSave(); return; }
     var batch = loadReagentBatches().find(function (item) { return item.scope === scope && item.id === id; });
     if (!batch) return;
     syncRegistrationFromUi();
     // Copy only reagent fields: a reusable batch never contains review or release decisions.
     var fields = scope === "mix" ? MIX_BATCH_FIELDS : ASSAY_BATCH_FIELDS;
     var target = batchTarget(scope);
+    var changed = fields.some(function (field) { return (target[field] || "") !== (batch.values[field] || ""); });
     fields.forEach(function (field) { target[field] = batch.values[field] || ""; });
-    markRegistrationDirty({ invalidateApproval: true });
+    markRegistrationDirty({ invalidateApproval: changed });
     renderRegistration();
   }
 
@@ -346,7 +350,7 @@
     var lotField = scope === "mix" ? "masterMixLot" : "lot";
     if (!target[lotField]) { toast("请先填写批号，再保存试剂批次。"); return; }
     var batches = loadReagentBatches();
-    var id = selectedBatchIds[scope] || crypto.randomUUID();
+    var id = selectedBatchIds[scope] || Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
     if (batches.some(function (batch) { return batch.scope === scope && batch.values[lotField] === target[lotField] && batch.id !== id; })) {
       toast("该批号已保存，请从列表中选择后编辑。");
       return;
@@ -361,6 +365,7 @@
       localStorage.setItem(REAGENT_BATCHES_STORAGE_KEY, JSON.stringify(batches));
       selectedBatchIds[scope] = id;
       renderBatchControls();
+      scheduleRegistrationSave();
       toast("试剂批次已保存。");
     } catch (error) { toast("试剂批次保存失败，请检查浏览器存储空间。"); }
   }
@@ -374,6 +379,7 @@
       localStorage.setItem(REAGENT_BATCHES_STORAGE_KEY, JSON.stringify(batches.filter(function (item) { return item.id !== batch.id; })));
       delete selectedBatchIds[scope];
       renderBatchControls();
+      scheduleRegistrationSave();
       toast("已从批次列表删除。");
     } catch (error) { toast("删除失败，请检查浏览器存储设置。"); }
   }

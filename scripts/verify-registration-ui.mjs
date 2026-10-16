@@ -42,6 +42,8 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: "Asia/Shanghai", acceptDownloads: true });
   const page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
+  // Ordinary HTTP static hosting has no secure-context UUID API.
+  await page.addInitScript(() => Object.defineProperty(window.crypto, "randomUUID", { value: undefined }));
   // UTC is still October 15; the experiment date must use the user's October 16.
   await page.clock.setFixedTime(new Date("2026-10-15T16:30:00Z"));
   await page.goto(pathToFileURL(path.join(root, "cnvtool.html")).href);
@@ -80,6 +82,7 @@ try {
   await page.locator("#record-mix-brand").fill("Mix vendor");
   await page.locator("#record-mix-expiry").fill("2027-01-01");
   await mixBatches.getByRole("button", { name: "保存批次", exact: true }).click();
+  assert.equal(await mixBatches.locator("option").filter({ hasText: "MIX-001" }).count(), 1, "batch saving works without the secure-context UUID API");
   await mixBatches.locator("select").selectOption("");
   await page.locator("#record-mix-lot").fill("MIX-002");
   await mixBatches.getByRole("button", { name: "保存批次", exact: true }).click();
@@ -88,8 +91,27 @@ try {
   await page.locator("#record-mix-expiry").fill("2028-02-02");
   await mixBatches.getByRole("button", { name: "保存修改", exact: true }).click();
   await page.reload();
-  await mixBatches.locator("select").selectOption({ label: "MIX-001 · TaqMan Mix" });
+  assert.notEqual(await mixBatches.locator("select").inputValue(), "", "refresh retains the selected batch so it remains directly editable");
   assert.equal(await page.locator("#record-mix-expiry").inputValue(), "2028-02-02", "edited batches persist across refresh");
+  await page.locator("#record-mix-expiry").fill("2029-03-03");
+  await mixBatches.getByRole("button", { name: "保存修改", exact: true }).click();
+  const completeFields = { "record-operator": "Technician", "record-volume": "10 µL", "record-protocol": "SOP-1", "record-mix-catalog": "Mix-Cat", "record-review-date": "2026-10-12" };
+  for (const [id, value] of Object.entries(completeFields)) await page.locator("#" + id).fill(value);
+  for (const field of ["brand", "id", "lot", "concentration"]) {
+    for (const input of await page.locator(".record-assay-" + field).all()) await input.fill("Recorded");
+  }
+  // Keep this saved batch identical to the completed registration (catalogue was just filled).
+  await mixBatches.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.locator("#record-final-decision").selectOption("同意放行");
+  await page.reload();
+  assert.equal(await page.locator("#record-final-decision").inputValue(), "同意放行", "refresh preserves a completed review");
+  await mixBatches.locator("select").selectOption({ label: "MIX-001 · TaqMan Mix" });
+  assert.equal(await page.locator("#record-final-decision").inputValue(), "同意放行", "selecting identical reagent information does not invalidate review");
+  assert.equal(await page.locator("#record-review-date").inputValue(), "2026-10-12");
+  await mixBatches.locator("select").selectOption({ label: "MIX-002 · TaqMan Mix" });
+  assert.equal(await page.locator("#record-final-decision").inputValue(), "待复核", "actually changing reagent information requires a new review");
+  assert.equal(await page.locator("#record-review-date").inputValue(), "");
+  await mixBatches.locator("select").selectOption({ label: "MIX-001 · TaqMan Mix" });
   page.once("dialog", dialog => dialog.accept());
   await mixBatches.getByRole("button", { name: "删除", exact: true }).click();
   assert.equal(await mixBatches.locator("option").filter({ hasText: "MIX-001" }).count(), 0);
