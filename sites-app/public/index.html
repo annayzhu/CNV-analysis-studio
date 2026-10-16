@@ -227,7 +227,7 @@
             <span class="step-number">05</span>
             <div>
               <h2>实验登记信息</h2>
-              <p>仪器与分析信息自动写入；只需补录板号、人员和本板试剂批次。品牌、货号等常用信息可在当前浏览器复用，批号和有效期每次重新确认。</p>
+              <p>修改自动保存在当前浏览器，刷新可继续上次登记。新实验日期默认当天，试剂批次可从已存列表中选择。</p>
             </div>
           </div>
           <div class="record-actions">
@@ -252,9 +252,9 @@
         <details class="record-details" open>
           <summary>试剂批次与复核信息</summary>
           <div class="record-subsection">
-            <h3>Master Mix</h3>
-            <label class="record-mix-name"><span>试剂名称</span><input id="record-mix-name" placeholder="例如 2X TaqMan Genotyping Master Mix"></label>
-            <div class="record-grid record-grid--four">
+            <div class="reagent-heading"><h3>Master Mix</h3><div class="batch-controls" data-batch-scope="mix"></div></div>
+            <div class="record-grid reagent-fields">
+              <label><span>试剂名称</span><input id="record-mix-name" placeholder="例如 2X TaqMan Master Mix"></label>
               <label><span>品牌</span><input id="record-mix-brand" placeholder="品牌"></label>
               <label><span>Cat.</span><input id="record-mix-catalog" placeholder="货号"></label>
               <label><span>批号</span><input id="record-mix-lot" placeholder="Lot"></label>
@@ -264,7 +264,7 @@
 
           <div class="record-subsection">
             <h3>Assay / 试剂</h3>
-            <p>Target 和 Reporter 由仪器文件自动识别；品牌、Assay ID、浓度等可在本机复用，批号不会自动沿用到下一板。</p>
+            <p>Target 和 Reporter 由仪器文件识别；选择已存批次可填入试剂信息，修改后点击“保存修改”。</p>
             <div id="record-assays" class="registration-assays"></div>
           </div>
 
